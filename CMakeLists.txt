@@ -25,6 +25,85 @@ project(vulkan-minimal
 
 #---------------------------------------------------------------------------------------
 
+set (VULKAN_COMPONENTS "dxc" "dxc_exe" "glslc")                      # Componenets we need CMake to ensure exist
+find_package(Vulkan REQUIRED COMPONENTS ${VULKAN_COMPONENTS})        # Vulkan SDK
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)                  # Vulkan Memory Allocator
+find_package(unofficial-vulkan-memory-allocator-hpp CONFIG REQUIRED) # Vulkan Memory Allocator - Hpp
+find_package(vk-bootstrap CONFIG REQUIRED)                           # vk-bootstrap
+find_package(glm CONFIG REQUIRED)                                    # GLM math library
+find_package(glfw3 CONFIG REQUIRED)                                  # GLFW library
+
+#---------------------------------------------------------------------------------------
+
+# function to compile HLSL into SPIR-V files
+function(target_hlsl_sources TARGET)
+	if (NOT TARGET Vulkan::dxc_exe)
+		message(FATAL_ERROR "[Error]: Could not find dxc")
+	endif()
+
+	# figure out how many files we have to configure given the pattern
+	list(LENGTH ARGN count_HLSL)
+	math(EXPR count_HLSL "${count_HLSL} / 3")
+
+	# List of compiled shader output
+	set(shader_files "")
+	set(shader_sources "")
+
+	# Loop through all the pairs for filename:profile provided
+	foreach(i RANGE 1 ${count_HLSL})
+		math(EXPR fni "(${i}-1)*3")              # filename index
+		math(EXPR pfi "${fni}+2")                # profile index
+		list(GET ARGN ${fni} hlsl_filename)      # get the filename[i]
+		list(GET ARGN ${pfi} hlsl_profile)       # get the profile[i]
+
+		# get the absolute path of current source file
+		file(REAL_PATH ${hlsl_filename} source_abs)
+
+		if(NOT EXISTS ${source_abs})
+			message(FATAL_ERROR "Cannot find shader file: ${source_abs}")
+		endif()
+
+		# get only the filename from absolute path
+		cmake_path(GET source_abs STEM basename)
+		set(basename "${basename}.${hlsl_profile}")
+
+		# get only the parent directory of the file from absolute path
+		cmake_path(GET source_abs PARENT_PATH source_fldr)
+		get_filename_component(source_fldr "${source_fldr}" NAME)
+		
+		# shader output folder will be a subfolder in the binary directory
+		set(shader_dir ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders)
+
+		# full path to compiled output 
+		set(output ${shader_dir}/${basename}.spv)
+
+		# call vulkan sdk's dxc compiler with source and output arguments.
+		add_custom_command(
+			OUTPUT ${output}
+			COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_dir}
+			COMMAND Vulkan::dxc_exe -spirv -E main -Fo ${output} -T ${hlsl_profile} ${source_abs}
+			DEPENDS ${source_abs}
+			COMMENT "DXC Compiling SPIRV: ${hlsl_filename} -> ${output}"
+			VERBATIM
+		)
+
+		list(APPEND shader_sources "${hlsl_filename}")
+		list(APPEND shader_files "${output}")
+	endforeach()
+
+	# make a new variable to hold all output target names
+	set(shader_group "${TARGET}_HLSL")
+	# add custom target using new variable bound to output file of glslc step
+	add_custom_target("${shader_group}"
+					  DEPENDS "${shader_files}"
+					  SOURCES "${shader_sources}"
+	)
+	# add compilation of this shader as dependency of the target
+	add_dependencies("${TARGET}" "${shader_group}")
+endfunction()
+
+#---------------------------------------------------------------------------------------
+
 # set platform specific configurations
 if(WIN32)
 	# Set Properties for Windows specific configurations
@@ -85,13 +164,6 @@ list(APPEND glfw_definitions
 
 #---------------------------------------------------------------------------------------
 
-find_package(Vulkan REQUIRED)                                        # Vulkan SDK
-find_package(VulkanMemoryAllocator CONFIG REQUIRED)                  # Vulkan Memory Allocator
-find_package(unofficial-vulkan-memory-allocator-hpp CONFIG REQUIRED) # Vulkan Memory Allocator - Hpp
-find_package(vk-bootstrap CONFIG REQUIRED)                           # vk-bootstrap
-find_package(glm CONFIG REQUIRED)                                    # GLM math library
-find_package(glfw3 CONFIG REQUIRED)                                  # GLFW library
-
 # name of this application/library
 set(PRJ_APP_NAME "vk-min-app")
 
@@ -125,7 +197,16 @@ target_link_libraries(${PRJ_APP_NAME}
 		GPUOpen::VulkanMemoryAllocator                                   # Vulkan Memory Allocator
 		unofficial::VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-Hpp # Vulkan Memory Allocator - Hpp
 		vk-bootstrap::vk-bootstrap                                       # vk-bootstrap
-		vk-bootstrap::vk-bootstrap-compiler-warnings                     # vk-bootstrap with compiler warning??
+		vk-bootstrap::vk-bootstrap-compiler-warnings                     # vk-bootstrap with compiler warnings
 		glm::glm                                                         # GLM math library
 		glfw                                                             # GLFW library
 )
+
+# shader source files used by this application
+target_hlsl_sources(${PRJ_APP_NAME}
+		basic_shader.vs.hlsl : vs_6_4
+		basic_shader.ps.hlsl : ps_6_4
+)
+
+#---------------------------------------------------------------------------------------
+

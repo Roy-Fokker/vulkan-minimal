@@ -496,6 +496,11 @@ namespace vkm
 		vkb::destroy_debug_utils_messenger(ctx.instance, ctx.debug_messenger);
 		ctx.instance.destroy();
 	}
+	struct shader_binaries
+	{
+		std::vector<std::byte> vertex;
+		std::vector<std::byte> fragment;
+	};
 }
 
 auto main() -> int
@@ -513,8 +518,8 @@ auto main() -> int
 
 	// Initialize the render pipeline
 	auto shaders = vkm::shader_binaries{
-		.vertex   = io::read_file("shaders/vert.spv"),
-		.fragment = io::read_file("shaders/frag.spv"),
+		.vertex   = io::read_file("shaders/basic_shader.vs_6_4.spv"),
+		.fragment = io::read_file("shaders/basic_shader.ps_6_4.spv"),
 	};
 
 	/* Loop until the user closes the window */
