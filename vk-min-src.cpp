@@ -39,6 +39,30 @@ namespace CLR
 }
 
 /*
+ * Platform IO helpers
+ * Basic helpers to read a file in binary mode
+ */
+namespace io
+{
+	// Read a file in binary mode
+	auto read_file(const std::filesystem::path &filename) -> std::vector<std::byte>
+	{
+		auto file = std::ifstream(filename, std::ios::in | std::ios::binary);
+
+		assert(file.good() && "failed to open file!");
+
+		auto file_size = std::filesystem::file_size(filename);
+		auto buffer    = std::vector<std::byte>(file_size);
+
+		file.read(reinterpret_cast<char *>(buffer.data()), file_size);
+
+		file.close();
+
+		return buffer;
+	}
+}
+
+/*
  * GLFW helpers
  * Basic helpers to create a window and close it on escape
  */
@@ -487,6 +511,11 @@ auto main() -> int
 	// Initialize Vulkan
 	auto vk_ctx = vkm::init_vulkan(window.get());
 
+	// Initialize the render pipeline
+	auto shaders = vkm::shader_binaries{
+		.vertex   = io::read_file("shaders/vert.spv"),
+		.fragment = io::read_file("shaders/frag.spv"),
+	};
 
 	/* Loop until the user closes the window */
 	while (not glfwWindowShouldClose(window.get()))
