@@ -11,6 +11,32 @@ import std;
 
 using namespace std::literals;
 
+// Colors for the console
+namespace CLR
+{
+	// Regular Colors
+	constexpr auto BLK = "\033[0;30m";
+	constexpr auto RED = "\033[0;31m";
+	constexpr auto GRN = "\033[0;32m";
+	constexpr auto YEL = "\033[0;33m";
+	constexpr auto BLU = "\033[0;34m";
+	constexpr auto MAG = "\033[0;35m";
+	constexpr auto CYN = "\033[0;36m";
+	constexpr auto WHT = "\033[0;37m";
+
+	// Bright Colors
+	constexpr auto BBLK = "\033[1;30m";
+	constexpr auto BRED = "\033[1;31m";
+	constexpr auto BGRN = "\033[1;32m";
+	constexpr auto BYEL = "\033[1;33m";
+	constexpr auto BBLU = "\033[1;34m";
+	constexpr auto BMAG = "\033[1;35m";
+	constexpr auto BCYN = "\033[1;36m";
+	constexpr auto BWHT = "\033[1;37m";
+
+	constexpr auto RESET = "\033[0m";
+}
+
 /*
  * GLFW helpers
  * Basic helpers to create a window and close it on escape
@@ -22,6 +48,7 @@ namespace glfw
 	{
 		void operator()(GLFWwindow *ptr)
 		{
+			std::println("{}Destroying window...{}", CLR::BLU, CLR::RESET);
 			glfwDestroyWindow(ptr);
 			glfwTerminate();
 		}
@@ -30,7 +57,7 @@ namespace glfw
 	// Callback for GLFW errors
 	void error_callback(int error, const char *description)
 	{
-		std::println("Error {}: {}", error, description);
+		std::println("{}Error {}:{} {}", CLR::BRED, error, CLR::RESET, description);
 	}
 
 	// Close the window when the escape key is pressed
@@ -52,6 +79,8 @@ namespace glfw
 	// Create a window with GLFW
 	auto make_window(int width, int height, std::string_view title) -> std::expected<std::unique_ptr<GLFWwindow, destroy_glfw_win>, int>
 	{
+		std::println("{}Creating window...{}", CLR::BLU, CLR::RESET);
+
 		glfwSetErrorCallback(error_callback); // in case of issues print to console
 
 		glfwInit(); // Initialize GLFW
