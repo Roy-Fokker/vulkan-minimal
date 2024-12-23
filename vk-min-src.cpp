@@ -1,4 +1,5 @@
 // Include files must be before the import statement
+#include <cassert>
 #include <Vulkan/vulkan.hpp>
 #include <VkBootstrap.h>
 #include <GLFW/glfw3.h>
