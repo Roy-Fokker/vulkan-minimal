@@ -77,7 +77,7 @@ namespace glfw
 	}
 
 	// Create a window with GLFW
-	auto make_window(int width, int height, std::string_view title) -> std::expected<std::unique_ptr<GLFWwindow, destroy_glfw_win>, int>
+	auto make_window(int width, int height, std::string_view title) -> std::unique_ptr<GLFWwindow, destroy_glfw_win>
 	{
 		std::println("{}Creating window...{}", CLR::BLU, CLR::RESET);
 
@@ -89,13 +89,7 @@ namespace glfw
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);   // Window is not resizable
 
 		auto window = glfwCreateWindow(width, height, title.data(), nullptr, nullptr); // Create the window
-
-		if (window == nullptr) // Check if the window was created
-		{
-			glfwTerminate();
-			std::println("Failed to create window");
-			return std::unexpected(-1); // failed to create window
-		}
+		assert(window != nullptr && "Failed to create GLFW window");
 
 		glfw::close_window_on_escape(window); // Close the window on escape
 
@@ -119,12 +113,8 @@ auto main() -> int
 	constexpr auto window_height = 1080;
 
 	// Call GLFW to create a window
-	auto wnd_exp = glfw::make_window(window_width, window_height, app_name);
-	if (not wnd_exp.has_value())
-	{
-		return wnd_exp.error();
-	}
-	auto window = std::move(wnd_exp.value());
+	auto window = glfw::make_window(window_width, window_height, app_name);
+
 
 	/* Loop until the user closes the window */
 	while (not glfwWindowShouldClose(window.get()))
