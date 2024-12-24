@@ -496,11 +496,468 @@ namespace vkm
 		vkb::destroy_debug_utils_messenger(ctx.instance, ctx.debug_messenger);
 		ctx.instance.destroy();
 	}
+
+	// This holds all the data required to render a frame
+	struct render_context
+	{
+		// Created by create_pipeline
+		vk::PipelineLayout layout;
+		vk::Pipeline pipeline;
+
+		// Populated by main function
+		std::array<float, 4> clear_color;
+	};
+
 	struct shader_binaries
 	{
-		std::vector<std::byte> vertex;
-		std::vector<std::byte> fragment;
+		std::vector<std::byte> vertex{};
+		std::vector<std::byte> fragment{};
 	};
+
+	// Check if the format is a depth only format
+	auto is_depth_only_format(vk::Format format) -> bool
+	{
+		return format == vk::Format::eD16Unorm ||
+		       format == vk::Format::eD32Sfloat;
+	}
+
+	// Check if the format is a depth stencil format
+	auto is_depth_stencil_format(vk::Format format) -> bool
+	{
+		return format == vk::Format::eD16UnormS8Uint ||
+		       format == vk::Format::eD24UnormS8Uint ||
+		       format == vk::Format::eD32SfloatS8Uint;
+	}
+
+	auto create_pipeline(const vulkan_context &ctx,
+	                     const shader_binaries &shaders,
+	                     vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList,
+	                     vk::PolygonMode polygon_mode   = vk::PolygonMode::eFill,
+	                     vk::CullModeFlags cull_mode    = vk::CullModeFlagBits::eFront,
+	                     vk::FrontFace front_face       = vk::FrontFace::eCounterClockwise,
+	                     vk::Format depth_format        = vk::Format::eUndefined)
+		-> render_context
+	{
+		// Lambda to create vk::ShaderModule
+		auto create_shader_module = [&](const std::span<const std::byte> shader_bin) -> vk::ShaderModule {
+			auto shader_info = vk::ShaderModuleCreateInfo{
+				.codeSize = shader_bin.size(),
+				.pCode    = reinterpret_cast<const uint32_t *>(shader_bin.data()),
+			};
+
+			return ctx.device.createShaderModule(shader_info);
+		};
+
+		// Assume desc::shaders will always have vertex and fragment shaders
+
+		// Convert shader binary into shader modules
+		using shader_stage_module = std::tuple<vk::ShaderStageFlagBits, vk::ShaderModule>;
+		auto shader_list          = std::vector<shader_stage_module>{
+            { vk::ShaderStageFlagBits::eVertex, create_shader_module(shaders.vertex) },
+            { vk::ShaderStageFlagBits::eFragment, create_shader_module(shaders.fragment) },
+		};
+
+		// Shader Stages
+		// Assume all shaders will have main function as entry point
+		auto shader_stage_infos = std::vector<vk::PipelineShaderStageCreateInfo>{};
+		std::ranges::transform(shader_list,
+		                       std::back_inserter(shader_stage_infos),
+		                       [](const shader_stage_module &stg_module) {
+			return vk::PipelineShaderStageCreateInfo{
+				.stage  = std::get<vk::ShaderStageFlagBits>(stg_module),
+				.module = std::get<vk::ShaderModule>(stg_module),
+				.pName  = "main"
+			};
+		});
+
+		// Empty VertexInputStateCreateInfo, as system won't be using it
+		auto vertex_input_info = vk::PipelineVertexInputStateCreateInfo{};
+
+		// Input Assembly
+		auto input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo{
+			.topology               = topology,
+			.primitiveRestartEnable = false,
+		};
+
+		// Viewport
+		auto viewport_info = vk::PipelineViewportStateCreateInfo{
+			.viewportCount = 1,
+			.scissorCount  = 1,
+		};
+
+		// Rasterization
+		auto rasterization_info = vk::PipelineRasterizationStateCreateInfo{
+			.depthClampEnable        = false,
+			.rasterizerDiscardEnable = false,
+			.polygonMode             = polygon_mode,
+			.cullMode                = cull_mode,
+			.frontFace               = front_face,
+			.depthBiasEnable         = false,
+			.lineWidth               = 1.0f,
+		};
+
+		// Multisample anti-aliasing
+		auto multisample_info = vk::PipelineMultisampleStateCreateInfo{
+			.rasterizationSamples = vk::SampleCountFlagBits::e1, // should this be higher for higher msaa?
+			.sampleShadingEnable  = false,
+		};
+
+		// Color Blend Attachment
+		auto color_blend_attach_st = vk::PipelineColorBlendAttachmentState{
+			.blendEnable    = false,
+			.colorWriteMask = vk::ColorComponentFlagBits::eR |
+			                  vk::ColorComponentFlagBits::eG |
+			                  vk::ColorComponentFlagBits::eB |
+			                  vk::ColorComponentFlagBits::eA,
+		};
+
+		// Color Blend State
+		auto color_blend_info = vk::PipelineColorBlendStateCreateInfo{
+			.logicOpEnable   = false,
+			.logicOp         = vk::LogicOp::eCopy,
+			.attachmentCount = 1,
+			.pAttachments    = &color_blend_attach_st,
+			.blendConstants  = std::array{ 0.f, 0.f, 0.f, 0.f },
+		};
+
+		// Dynamic States
+		auto dynamic_states = std::vector{
+			vk::DynamicState::eViewport,
+			vk::DynamicState::eScissor,
+		};
+
+		auto dynamic_state_info = vk::PipelineDynamicStateCreateInfo{
+			.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
+			.pDynamicStates    = dynamic_states.data(),
+		};
+
+		// Pipeline Layout
+		// TODO: empty for now, as no descriptors or other systems are being used yet.
+		auto pipeline_layout_info = vk::PipelineLayoutCreateInfo{};
+		auto layout               = ctx.device.createPipelineLayout(pipeline_layout_info);
+
+		// array of color formats, only one for now
+		auto color_formats = std::array{ ctx.sc_format };
+
+		// Pipeline Rendering Info
+		auto pipeline_rendering_info = vk::PipelineRenderingCreateInfo{
+			.colorAttachmentCount    = static_cast<uint32_t>(color_formats.size()),
+			.pColorAttachmentFormats = color_formats.data(),
+			.depthAttachmentFormat   = depth_format,
+		};
+		if (not is_depth_only_format(depth_format))
+		{
+			pipeline_rendering_info.stencilAttachmentFormat = depth_format;
+		}
+
+		// Finally create Pipeline
+		auto pipeline_info = vk::GraphicsPipelineCreateInfo{
+			.pNext               = &pipeline_rendering_info,
+			.stageCount          = static_cast<uint32_t>(shader_stage_infos.size()),
+			.pStages             = shader_stage_infos.data(),
+			.pVertexInputState   = &vertex_input_info,
+			.pInputAssemblyState = &input_assembly_info,
+			.pViewportState      = &viewport_info,
+			.pRasterizationState = &rasterization_info,
+			.pMultisampleState   = &multisample_info,
+			.pColorBlendState    = &color_blend_info,
+			.pDynamicState       = &dynamic_state_info,
+			.layout              = layout,
+			.subpass             = 0,
+		};
+
+		auto result_value = ctx.device.createGraphicsPipeline(nullptr, pipeline_info);
+		assert(result_value.result == vk::Result::eSuccess && "Failed to create Graphics Pipeline");
+
+		auto pipeline = result_value.value;
+
+		// Destroy the shader modules
+		for (auto &&[stg, mod] : shader_list)
+		{
+			ctx.device.destroyShaderModule(mod);
+		}
+
+		std::println("{}Pipeline created.{}",
+		             CLR::GRN, CLR::RESET);
+
+		return render_context{
+			.layout   = layout,
+			.pipeline = pipeline,
+		};
+	}
+
+	void destroy_pipeline(const vulkan_context &ctx, render_context &rndr)
+	{
+		ctx.device.waitIdle();
+		ctx.device.destroyPipelineLayout(rndr.layout);
+		ctx.device.destroyPipeline(rndr.pipeline);
+	}
+
+	// Structure to make image_layout_transition easier to use
+	struct image_transition_info
+	{
+		vk::PipelineStageFlags src_stage_mask;
+		vk::PipelineStageFlags dst_stage_mask;
+		vk::AccessFlags src_access_mask;
+		vk::AccessFlags dst_access_mask;
+		vk::ImageLayout old_layout;
+		vk::ImageLayout new_layout;
+		vk::ImageSubresourceRange subresource_range;
+	};
+
+	// Helper functions to get vk::PipelineStageFlags and vk::AccessFlags from vk::ImageLayout
+	auto get_pipeline_stage_flags(vk::ImageLayout image_layout) -> vk::PipelineStageFlags
+	{
+		switch (image_layout)
+		{
+			using il = vk::ImageLayout;
+			using pf = vk::PipelineStageFlagBits;
+
+		case il::eUndefined:
+			return pf::eTopOfPipe;
+		case il::ePreinitialized:
+			return pf::eHost;
+		case il::eTransferSrcOptimal:
+		case il::eTransferDstOptimal:
+			return pf::eTransfer;
+		case il::eColorAttachmentOptimal:
+			return pf::eColorAttachmentOutput;
+		case il::eDepthAttachmentOptimal:
+			return pf::eEarlyFragmentTests | pf::eLateFragmentTests;
+		case il::eFragmentShadingRateAttachmentOptimalKHR:
+			return pf::eFragmentShadingRateAttachmentKHR;
+		case il::eReadOnlyOptimal:
+			return pf::eVertexShader | pf::eFragmentShader;
+		case il::ePresentSrcKHR:
+			return pf::eBottomOfPipe;
+		case il::eGeneral:
+			assert(false && "Don't know how to get a meaningful vk::PipelineStageFlags for VK_IMAGE_LAYOUT_GENERAL! Don't use it!");
+		default:
+			assert(false && "Unknown layout flag");
+		}
+		return {};
+	}
+
+	auto get_access_flags(vk::ImageLayout image_layout) -> vk::AccessFlags
+	{
+		switch (image_layout)
+		{
+			using il = vk::ImageLayout;
+			using af = vk::AccessFlagBits;
+
+		case il::eUndefined:
+		case il::ePresentSrcKHR:
+			return af::eNone;
+		case il::ePreinitialized:
+			return af::eHostWrite;
+		case il::eColorAttachmentOptimal:
+			return af::eColorAttachmentRead | af::eColorAttachmentWrite;
+		case il::eDepthAttachmentOptimal:
+			return af::eDepthStencilAttachmentRead | af::eDepthStencilAttachmentWrite;
+		case il::eFragmentShadingRateAttachmentOptimalKHR:
+			return af::eFragmentShadingRateAttachmentReadKHR;
+		case il::eShaderReadOnlyOptimal:
+			return af::eShaderRead | af::eInputAttachmentRead;
+		case il::eTransferSrcOptimal:
+			return af::eTransferRead;
+		case il::eTransferDstOptimal:
+			return af::eTransferWrite;
+		case il::eGeneral:
+			assert(false && "Don't know how to get a meaningful vk::AccessFlags for VK_IMAGE_LAYOUT_GENERAL! Don't use it!");
+		default:
+			assert(false && "Unknown layout flag");
+		}
+		return {};
+	}
+
+	// Move image from old_layout to new_layout
+	void image_layout_transition(vk::CommandBuffer cb, vk::Image image, const image_transition_info &iti)
+	{
+		auto image_memory_barrier = vk::ImageMemoryBarrier{
+			.srcAccessMask       = iti.src_access_mask,
+			.dstAccessMask       = iti.dst_access_mask,
+			.oldLayout           = iti.old_layout,
+			.newLayout           = iti.new_layout,
+			.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+			.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+			.image               = image,
+			.subresourceRange    = iti.subresource_range,
+		};
+
+		cb.pipelineBarrier(iti.src_stage_mask, iti.dst_stage_mask,
+		                   vk::DependencyFlags{},
+		                   {}, {},
+		                   { image_memory_barrier });
+	}
+
+	void image_layout_transition(vk::CommandBuffer cb,
+	                             vk::Image image,
+	                             vk::ImageLayout old_layout, vk::ImageLayout new_layout,
+	                             const vk::ImageSubresourceRange &subresource_range)
+	{
+		image_layout_transition(cb,
+		                        image,
+		                        image_transition_info{
+								  .src_stage_mask    = get_pipeline_stage_flags(old_layout),
+								  .dst_stage_mask    = get_pipeline_stage_flags(new_layout),
+								  .src_access_mask   = get_access_flags(old_layout),
+								  .dst_access_mask   = get_access_flags(new_layout),
+								  .old_layout        = old_layout,
+								  .new_layout        = new_layout,
+								  .subresource_range = subresource_range,
+								});
+	}
+
+	void update_command_buffer(const vulkan_context &ctx, const render_context &rndr)
+	{
+		constexpr auto wait_time = UINT_MAX;
+		// Reset semaphores and fences
+		auto sync         = ctx.image_signals.at(ctx.current_frame);
+		auto fence_result = ctx.device.waitForFences(sync.in_flight_fence,
+		                                             true,
+		                                             wait_time);
+		assert(fence_result == vk::Result::eSuccess && "Failed to wait for fence");
+
+		ctx.device.resetFences(sync.in_flight_fence);
+
+		// Acquire next image
+		auto [result, image_index] = ctx.device.acquireNextImageKHR(ctx.swap_chain,
+		                                                            wait_time,
+		                                                            sync.image_available,
+		                                                            VK_NULL_HANDLE);
+		assert((result == vk::Result::eSuccess or
+		        result == vk::Result::eSuboptimalKHR) and
+		       "Failed to acquire next image");
+		assert(image_index == ctx.current_frame and "Image index mismatch");
+
+		// Viewport and Scissor
+		auto viewport = vk::Viewport{
+			.x        = 0.0f,
+			.y        = static_cast<float>(ctx.sc_extent.height),
+			.width    = static_cast<float>(ctx.sc_extent.width),
+			.height   = static_cast<float>(ctx.sc_extent.height) * -1.f,
+			.minDepth = 0.0f,
+			.maxDepth = 1.0f,
+		};
+		auto viewports = std::array{ viewport };
+		auto scissor   = vk::Rect2D{
+			  .offset = { 0, 0 },
+			  .extent = ctx.sc_extent,
+		};
+		auto scissors = std::array{ scissor };
+
+		// Color Attachment
+		auto color_range = vk::ImageSubresourceRange{
+			.aspectMask     = vk::ImageAspectFlagBits::eColor,
+			.baseMipLevel   = 0,
+			.levelCount     = vk::RemainingMipLevels,
+			.baseArrayLayer = 0,
+			.layerCount     = vk::RemainingArrayLayers,
+		};
+		auto clear_value = vk::ClearValue{
+			.color = rndr.clear_color,
+		};
+		auto color_attachment = vk::RenderingAttachmentInfo{
+			.imageView   = ctx.sc_views.at(ctx.current_frame),
+			.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+			.resolveMode = vk::ResolveModeFlagBits::eNone,
+			.loadOp      = vk::AttachmentLoadOp::eClear,
+			.storeOp     = vk::AttachmentStoreOp::eStore,
+			.clearValue  = clear_value,
+		};
+
+		// current draw image
+		auto draw_image = ctx.sc_images.at(ctx.current_frame);
+
+		// current command buffer
+		auto cb = ctx.gfx_command_buffers.at(ctx.current_frame);
+
+		// Begin Command Buffer
+		auto cb_begin_info = vk::CommandBufferBeginInfo{};
+		auto cb_result     = cb.begin(&cb_begin_info);
+		assert(cb_result == vk::Result::eSuccess && "Failed to begin command buffer");
+
+		// Transition Image Layout
+		image_layout_transition(cb,
+		                        draw_image,
+		                        image_transition_info{
+								  .src_stage_mask    = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+								  .dst_stage_mask    = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+								  .src_access_mask   = vk::AccessFlags{},
+								  .dst_access_mask   = vk::AccessFlagBits::eColorAttachmentWrite,
+								  .old_layout        = vk::ImageLayout::eUndefined,
+								  .new_layout        = vk::ImageLayout::eColorAttachmentOptimal,
+								  .subresource_range = color_range,
+								});
+
+		// Begin Rendering
+		auto rendering_info = vk::RenderingInfo{
+			.renderArea           = scissor,
+			.layerCount           = 1,
+			.colorAttachmentCount = 1,
+			.pColorAttachments    = &color_attachment,
+		};
+		cb.beginRendering(rendering_info);
+
+		// Set Viewport and Scissor
+		cb.setViewport(0, viewports);
+		cb.setScissor(0, scissors);
+
+		// Set Pipeline
+		cb.bindPipeline(vk::PipelineBindPoint::eGraphics, rndr.pipeline);
+
+		// Draw
+		cb.draw(3, 1, 0, 0);
+
+		// End Rendering
+		cb.endRendering();
+
+		// Transition Image Layout
+		image_layout_transition(cb,
+		                        draw_image,
+		                        vk::ImageLayout::eColorAttachmentOptimal,
+		                        vk::ImageLayout::ePresentSrcKHR,
+		                        color_range);
+
+		// End Command Buffer
+		cb.end();
+	}
+
+	void submit_and_present(vulkan_context &ctx)
+	{
+		auto sync = ctx.image_signals.at(ctx.current_frame);
+		auto cb   = ctx.gfx_command_buffers.at(ctx.current_frame);
+
+		auto wait_stage = vk::PipelineStageFlags{ vk::PipelineStageFlagBits::eColorAttachmentOutput };
+
+		// Submit Command Buffer
+		auto submit_info = vk::SubmitInfo{
+			.waitSemaphoreCount   = 1,
+			.pWaitSemaphores      = &sync.image_available,
+			.pWaitDstStageMask    = &wait_stage,
+			.commandBufferCount   = 1,
+			.pCommandBuffers      = &cb,
+			.signalSemaphoreCount = 1,
+			.pSignalSemaphores    = &sync.render_finished,
+		};
+		ctx.gfx_queue.queue.submit({ submit_info }, sync.in_flight_fence);
+
+		// Present Image
+		auto present_info = vk::PresentInfoKHR{
+			.waitSemaphoreCount = 1,
+			.pWaitSemaphores    = &sync.render_finished,
+			.swapchainCount     = 1,
+			.pSwapchains        = &ctx.swap_chain,
+			.pImageIndices      = &ctx.current_frame,
+		};
+		auto result = ctx.gfx_queue.queue.presentKHR(present_info);
+		assert((result == vk::Result::eSuccess or     // Should normally be success
+		        result == vk::Result::eSuboptimalKHR) // happens when window resizes or closes
+		       and "Failed to present image");
+
+		// Update current frame
+		ctx.current_frame = (ctx.current_frame + 1) % ctx.max_frame_count;
+	}
 }
 
 auto main() -> int
@@ -521,15 +978,24 @@ auto main() -> int
 		.vertex   = io::read_file("shaders/basic_shader.vs_6_4.spv"),
 		.fragment = io::read_file("shaders/basic_shader.ps_6_4.spv"),
 	};
+	auto rndr        = vkm::create_pipeline(vk_ctx, shaders);
+	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.4f, 1.0f };
 
-	/* Loop until the user closes the window */
+	// Loop until the user closes the window
 	while (not glfwWindowShouldClose(window.get()))
 	{
-		/* Render here */
+		// update command buffer for current frame
+		vkm::update_command_buffer(vk_ctx, rndr);
 
-		/* Poll for and process events */
+		// submit command buffer and present image
+		vkm::submit_and_present(vk_ctx);
+
+		// Poll for and process events
 		glfwPollEvents();
 	}
+
+	// Destroy the render pipeline
+	vkm::destroy_pipeline(vk_ctx, rndr);
 
 	// Shutdown Vulkan
 	vkm::shutdown_vulkan(vk_ctx);
