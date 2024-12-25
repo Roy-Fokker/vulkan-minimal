@@ -1,10 +1,18 @@
 // Include files must be before the import statement
 #include <cassert>
+
+// Vulkan HPP header
 #include <Vulkan/vulkan.hpp>
+
+// Vulkan Bootstrap header
 #include <VkBootstrap.h>
 #include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
 
+// GLM headers
+#include <glm/glm.hpp>
+#include <glm/ext.hpp>
+
+// Vulkan Memory Allocator HPP header/implementation
 #define VMA_IMPLEMENTATION
 #include <vulkan-memory-allocator-hpp/vk_mem_alloc.hpp>
 
@@ -47,6 +55,8 @@ namespace io
 	// Read a file in binary mode
 	auto read_file(const std::filesystem::path &filename) -> std::vector<std::byte>
 	{
+		std::println("{}Reading file: {}{}", CLR::BLU, filename.string(), CLR::RESET);
+
 		auto file = std::ifstream(filename, std::ios::in | std::ios::binary);
 
 		assert(file.good() && "failed to open file!");
@@ -96,6 +106,7 @@ namespace glfw
 		                      [[maybe_unused]] int mods) {
 			if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 			{
+				std::println("{}Escape key pressed. Closing window...{}", CLR::YEL, CLR::RESET);
 				glfwSetWindowShouldClose(window, GLFW_TRUE);
 			}
 		});
@@ -131,7 +142,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
 /*
  * All Vulkan code will be in vkm namespace
  */
-namespace vkm
+namespace base
 {
 	constexpr auto use_vulkan_validation_layers{
 #ifdef _DEBUG
@@ -301,6 +312,7 @@ namespace vkm
 		                          .set_required_features_13(features1_3)
 		                          .set_required_features_12(features1_2)
 		                          .set_required_features(features)
+		                          // Because descriptor buffer is not part of Core Vulkan 1.3
 		                          .add_required_extension(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME)
 		                          .add_required_extension_features(descriptor_buffer_feature)
 		                          .set_surface(ctx.surface)
@@ -309,6 +321,7 @@ namespace vkm
 			std::println("Return value: {}", phy_dev_select.error().message());
 		assert(phy_dev_select.has_value() == true && "Failed to select Physical GPU");
 
+		// Enable the descriptor buffer extension features
 		auto phy_dev_ret = phy_dev_select.value();
 		auto res         = phy_dev_ret.enable_extension_features_if_present(descriptor_buffer_feature);
 		assert(res == true && "Failed to enable extension features on GPU");
@@ -496,7 +509,10 @@ namespace vkm
 		vkb::destroy_debug_utils_messenger(ctx.instance, ctx.debug_messenger);
 		ctx.instance.destroy();
 	}
+}
 
+namespace frame
+{
 	// This holds all the data required to render a frame
 	struct render_context
 	{
@@ -506,6 +522,21 @@ namespace vkm
 
 		// Populated by main function
 		std::array<float, 4> clear_color;
+
+		// Created by create_descriptor_set
+		vk::DescriptorSetLayout descriptor_set_layout;
+		vk::DeviceSize descriptor_set_layout_size;
+		vk::DeviceSize descriptor_set_layout_offset;
+		vma::Allocation descriptor_allocation;
+		vk::Buffer descriptor_buffer;
+		vk::DeviceSize descriptor_buffer_addr;
+		vk::PhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props;
+
+		// Created by create_uniform_buffer
+		vma::Allocation ubo_allocation;
+		vma::AllocationInfo ubo_info;
+		vk::Buffer ubo_buffer;
+		vk::DeviceSize ubo_buffer_addr;
 	};
 
 	struct shader_binaries
@@ -529,14 +560,14 @@ namespace vkm
 		       format == vk::Format::eD32SfloatS8Uint;
 	}
 
-	auto create_pipeline(const vulkan_context &ctx,
+	void create_pipeline(const base::vulkan_context &ctx,
+	                     render_context &rndr,
 	                     const shader_binaries &shaders,
 	                     vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList,
 	                     vk::PolygonMode polygon_mode   = vk::PolygonMode::eFill,
 	                     vk::CullModeFlags cull_mode    = vk::CullModeFlagBits::eFront,
 	                     vk::FrontFace front_face       = vk::FrontFace::eCounterClockwise,
 	                     vk::Format depth_format        = vk::Format::eUndefined)
-		-> render_context
 	{
 		// Lambda to create vk::ShaderModule
 		auto create_shader_module = [&](const std::span<const std::byte> shader_bin) -> vk::ShaderModule {
@@ -631,10 +662,17 @@ namespace vkm
 			.pDynamicStates    = dynamic_states.data(),
 		};
 
+		// Descriptor Sets to use with the pipeline
+		auto descriptor_sets = std::array{
+			rndr.descriptor_set_layout,
+		};
+
 		// Pipeline Layout
-		// TODO: empty for now, as no descriptors or other systems are being used yet.
-		auto pipeline_layout_info = vk::PipelineLayoutCreateInfo{};
-		auto layout               = ctx.device.createPipelineLayout(pipeline_layout_info);
+		auto pipeline_layout_info = vk::PipelineLayoutCreateInfo{
+			.setLayoutCount = static_cast<uint32_t>(descriptor_sets.size()),
+			.pSetLayouts    = descriptor_sets.data(),
+		};
+		rndr.layout = ctx.device.createPipelineLayout(pipeline_layout_info);
 
 		// array of color formats, only one for now
 		auto color_formats = std::array{ ctx.sc_format };
@@ -653,6 +691,7 @@ namespace vkm
 		// Finally create Pipeline
 		auto pipeline_info = vk::GraphicsPipelineCreateInfo{
 			.pNext               = &pipeline_rendering_info,
+			.flags               = vk::PipelineCreateFlagBits::eDescriptorBufferEXT, // for descriptor buffer
 			.stageCount          = static_cast<uint32_t>(shader_stage_infos.size()),
 			.pStages             = shader_stage_infos.data(),
 			.pVertexInputState   = &vertex_input_info,
@@ -662,14 +701,14 @@ namespace vkm
 			.pMultisampleState   = &multisample_info,
 			.pColorBlendState    = &color_blend_info,
 			.pDynamicState       = &dynamic_state_info,
-			.layout              = layout,
+			.layout              = rndr.layout,
 			.subpass             = 0,
 		};
 
 		auto result_value = ctx.device.createGraphicsPipeline(nullptr, pipeline_info);
 		assert(result_value.result == vk::Result::eSuccess && "Failed to create Graphics Pipeline");
 
-		auto pipeline = result_value.value;
+		rndr.pipeline = result_value.value;
 
 		// Destroy the shader modules
 		for (auto &&[stg, mod] : shader_list)
@@ -678,17 +717,11 @@ namespace vkm
 		}
 
 		std::println("{}Pipeline created.{}",
-		             CLR::GRN, CLR::RESET);
-
-		return render_context{
-			.layout   = layout,
-			.pipeline = pipeline,
-		};
+		             CLR::CYN, CLR::RESET);
 	}
 
-	void destroy_pipeline(const vulkan_context &ctx, render_context &rndr)
+	void destroy_pipeline(const base::vulkan_context &ctx, render_context &rndr)
 	{
-		ctx.device.waitIdle();
 		ctx.device.destroyPipelineLayout(rndr.layout);
 		ctx.device.destroyPipeline(rndr.pipeline);
 	}
@@ -808,7 +841,7 @@ namespace vkm
 								});
 	}
 
-	void update_command_buffer(const vulkan_context &ctx, const render_context &rndr)
+	void update_command_buffer(const base::vulkan_context &ctx, const render_context &rndr)
 	{
 		constexpr auto wait_time = UINT_MAX;
 		// Reset semaphores and fences
@@ -866,6 +899,14 @@ namespace vkm
 			.clearValue  = clear_value,
 		};
 
+		// Descriptor Buffer Bindings
+		auto desc_buff_binding_info = vk::DescriptorBufferBindingInfoEXT{
+			.address = rndr.descriptor_buffer_addr,
+			.usage   = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT,
+		};
+		auto desc_buff_set_idx = 0u;
+		auto desc_buff_offset  = vk::DeviceSize{ 0 };
+
 		// current draw image
 		auto draw_image = ctx.sc_images.at(ctx.current_frame);
 
@@ -906,6 +947,15 @@ namespace vkm
 		// Set Pipeline
 		cb.bindPipeline(vk::PipelineBindPoint::eGraphics, rndr.pipeline);
 
+		// Bind Descriptor buffer
+		cb.bindDescriptorBuffersEXT(1, &desc_buff_binding_info);
+		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
+		                                 rndr.layout,
+		                                 0,
+		                                 1,
+		                                 &desc_buff_set_idx,
+		                                 &desc_buff_offset);
+
 		// Draw
 		cb.draw(3, 1, 0, 0);
 
@@ -923,7 +973,7 @@ namespace vkm
 		cb.end();
 	}
 
-	void submit_and_present(vulkan_context &ctx)
+	void submit_and_present(base::vulkan_context &ctx)
 	{
 		auto sync = ctx.image_signals.at(ctx.current_frame);
 		auto cb   = ctx.gfx_command_buffers.at(ctx.current_frame);
@@ -958,8 +1008,201 @@ namespace vkm
 		// Update current frame
 		ctx.current_frame = (ctx.current_frame + 1) % ctx.max_frame_count;
 	}
+
+	void create_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		constexpr auto binding = 0u;
+
+		// return value such that 'size' is adjusted to match the memory 'alignment' requirements of the device
+		auto align_size = [](vk::DeviceSize size, vk::DeviceSize alignment) -> vk::DeviceSize {
+			return (size + alignment - 1) & ~(alignment - 1);
+		};
+
+		auto desc_set_layout_binding = vk::DescriptorSetLayoutBinding{
+			.binding         = binding,
+			.descriptorType  = vk::DescriptorType::eUniformBuffer,
+			.descriptorCount = 1,
+			.stageFlags      = vk::ShaderStageFlagBits::eVertex,
+		};
+
+		auto desc_set_layout_info = vk::DescriptorSetLayoutCreateInfo{
+			.flags        = vk::DescriptorSetLayoutCreateFlagBits::eDescriptorBufferEXT,
+			.bindingCount = 1,
+			.pBindings    = &desc_set_layout_binding,
+		};
+
+		rndr.descriptor_set_layout        = ctx.device.createDescriptorSetLayout(desc_set_layout_info);
+		rndr.descriptor_set_layout_size   = ctx.device.getDescriptorSetLayoutSizeEXT(rndr.descriptor_set_layout);
+		rndr.descriptor_set_layout_offset = ctx.device.getDescriptorSetLayoutBindingOffsetEXT(rndr.descriptor_set_layout, binding);
+
+		// Get descriptor buffer properties
+		auto device_props = vk::PhysicalDeviceProperties2{
+			.pNext = &rndr.descriptor_buffer_props,
+		};
+		ctx.chosen_gpu.getProperties2(&device_props);
+
+		// Align the size to the required alignment
+		rndr.descriptor_set_layout_size = align_size(rndr.descriptor_set_layout_size, rndr.descriptor_buffer_props.descriptorBufferOffsetAlignment);
+
+		std::println("{}Descriptor Set created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void destroy_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		ctx.device.destroyDescriptorSetLayout(rndr.descriptor_set_layout);
+	}
+
+	void create_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		auto buffer_info = vk::BufferCreateInfo{
+			.size  = rndr.descriptor_set_layout_size,
+			.usage = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+		};
+
+		auto alloc_info = vma::AllocationCreateInfo{
+			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
+			.usage = vma::MemoryUsage::eAuto,
+		};
+
+		std::tie(rndr.descriptor_buffer, rndr.descriptor_allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info);
+
+		auto buff_addr_info = vk::BufferDeviceAddressInfo{
+			.buffer = rndr.descriptor_buffer,
+		};
+		rndr.descriptor_buffer_addr = ctx.device.getBufferAddress(buff_addr_info);
+
+		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+		  .objectType   = vk::ObjectType::eBuffer,
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(rndr.descriptor_buffer)),
+		  .pObjectName  = "Descriptor Buffer",
+		});
+
+		std::println("{}Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void destroy_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		ctx.mem_allocator.destroyBuffer(rndr.descriptor_buffer, rndr.descriptor_allocation);
+	}
+
+	void create_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, uint32_t size)
+	{
+		auto buffer_info = vk::BufferCreateInfo{
+			.size  = size,
+			.usage = vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+		};
+
+		auto alloc_info = vma::AllocationCreateInfo{
+			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
+			.usage = vma::MemoryUsage::eAuto,
+		};
+
+		std::tie(rndr.ubo_buffer, rndr.ubo_allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &rndr.ubo_info);
+
+		auto buff_addr_info = vk::BufferDeviceAddressInfo{
+			.buffer = rndr.ubo_buffer,
+		};
+		rndr.ubo_buffer_addr = ctx.device.getBufferAddress(buff_addr_info);
+
+		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+		  .objectType   = vk::ObjectType::eBuffer,
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(rndr.ubo_buffer)),
+		  .pObjectName  = "Uniform Buffer",
+		});
+
+		std::println("{}Uniform Buffer created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void destroy_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		ctx.mem_allocator.destroyBuffer(rndr.ubo_buffer, rndr.ubo_allocation);
+	}
+
+	void populate_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		std::println("{}Populating Descriptor Buffer.{}", CLR::CYN, CLR::RESET);
+
+		auto buff_addr_info = vk::BufferDeviceAddressInfo{
+			.buffer = rndr.ubo_buffer,
+		};
+		auto ubo_buff_addr = ctx.device.getBufferAddress(buff_addr_info);
+
+		auto address_info = vk::DescriptorAddressInfoEXT{
+			.address = ubo_buff_addr,
+			.range   = rndr.ubo_info.size,
+			.format  = vk::Format::eUndefined,
+		};
+
+		auto buff_descriptor_info = vk::DescriptorGetInfoEXT{
+			.type = vk::DescriptorType::eUniformBuffer,
+			.data = {
+			  .pUniformBuffer = &address_info,
+			},
+		};
+
+		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(rndr.descriptor_allocation);
+		ctx.device.getDescriptorEXT(&buff_descriptor_info, rndr.descriptor_buffer_props.uniformBufferDescriptorSize, descriptor_buffer_ptr);
+		ctx.mem_allocator.unmapMemory(rndr.descriptor_allocation);
+
+		std::println("{}Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void populate_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, std::span<const std::byte> data)
+	{
+		std::println("{}Populating Uniform Buffer.{}", CLR::CYN, CLR::RESET);
+
+		auto ubo_ptr = ctx.mem_allocator.mapMemory(rndr.ubo_allocation);
+		std::memcpy(ubo_ptr, data.data(), data.size());
+		ctx.mem_allocator.unmapMemory(rndr.ubo_allocation);
+
+		std::println("{}Uniform Buffer populated.{}", CLR::CYN, CLR::RESET);
+	}
+
+	auto init_frame(const base::vulkan_context &ctx, const shader_binaries &shaders, uint32_t ubo_size) -> render_context
+	{
+		std::println("{}Initializing Frame...{}", CLR::CYN, CLR::RESET);
+		auto rndr = render_context{};
+
+		create_descriptor_set(ctx, rndr);
+		create_pipeline(ctx, rndr, shaders);
+		create_descriptor_buffer(ctx, rndr);
+		create_uniform_buffer(ctx, rndr, ubo_size);
+
+		populate_descriptor_buffer(ctx, rndr);
+
+		return rndr;
+	}
+
+	void destroy_frame(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		std::println("{}Destroying Frame...{}", CLR::CYN, CLR::RESET);
+
+		ctx.device.waitIdle();
+
+		destroy_uniform_buffer(ctx, rndr);
+		destroy_descriptor_buffer(ctx, rndr);
+		destroy_pipeline(ctx, rndr);
+		destroy_descriptor_set(ctx, rndr);
+	}
 }
 
+namespace app
+{
+	// Projection Matrix for Shader
+	struct projection
+	{
+		glm::mat4 data;
+	};
+
+	auto make_perspective_projection(int width, int height) -> projection
+	{
+		auto aspect_ratio = width / static_cast<float>(height);
+		auto proj         = glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 10.0f);
+		return projection{ .data = proj };
+	}
+}
+
+// Main entry point
 auto main() -> int
 {
 	// Window properties
@@ -971,33 +1214,40 @@ auto main() -> int
 	auto window = glfw::make_window(window_width, window_height, app_name);
 
 	// Initialize Vulkan
-	auto vk_ctx = vkm::init_vulkan(window.get());
+	auto vk_ctx = base::init_vulkan(window.get());
 
-	// Initialize the render pipeline
-	auto shaders = vkm::shader_binaries{
+	// Load precompiled shaders
+	auto shaders = frame::shader_binaries{
 		.vertex   = io::read_file("shaders/basic_shader.vs_6_4.spv"),
 		.fragment = io::read_file("shaders/basic_shader.ps_6_4.spv"),
 	};
-	auto rndr        = vkm::create_pipeline(vk_ctx, shaders);
+
+	// Initialize the render frame objects
+	auto rndr        = frame::init_frame(vk_ctx, shaders, sizeof(app::projection));
 	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.4f, 1.0f };
 
+	// Uniform data for shader
+	auto proj = app::make_perspective_projection(window_width, window_height);
+	frame::populate_uniform_buffer(vk_ctx, rndr, std::span{ reinterpret_cast<const std::byte *>(&proj), sizeof(app::projection) });
+
 	// Loop until the user closes the window
+	std::println("{}Starting main loop...{}", CLR::MAG, CLR::RESET);
 	while (not glfwWindowShouldClose(window.get()))
 	{
 		// update command buffer for current frame
-		vkm::update_command_buffer(vk_ctx, rndr);
+		frame::update_command_buffer(vk_ctx, rndr);
 
 		// submit command buffer and present image
-		vkm::submit_and_present(vk_ctx);
+		frame::submit_and_present(vk_ctx);
 
 		// Poll for and process events
 		glfwPollEvents();
 	}
 
 	// Destroy the render pipeline
-	vkm::destroy_pipeline(vk_ctx, rndr);
+	frame::destroy_frame(vk_ctx, rndr);
 
 	// Shutdown Vulkan
-	vkm::shutdown_vulkan(vk_ctx);
+	base::shutdown_vulkan(vk_ctx);
 	return 0;
 }
