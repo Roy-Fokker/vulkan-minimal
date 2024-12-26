@@ -35,3 +35,9 @@ Have made best effort to document/comment how it's being used.
 - Dynamic Rendering
 - Shader Device Address
 - Descriptor Buffers
+
+## References
+- https://github.com/KhronosGroup/Vulkan-Samples/tree/main/samples/extensions/descriptor_buffer_basic
+- https://github.com/steps3d/vulkan-with-classes/blob/main/example-descriptor-buffer.cpp
+- https://docs.vulkan.org/features/latest/features/proposals/VK_EXT_descriptor_buffer.html
+- https://www.khronos.org/blog/vk-ext-descriptor-buffer

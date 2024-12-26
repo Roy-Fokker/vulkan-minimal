@@ -33,7 +33,6 @@ using namespace std::literals;
  * Colors for the console
  * List of colors that can be used in the console using ANSI escape codes
  * Only works on terminals that support ANSI escape codes
- * https://en.wikipedia.org/wiki/ANSI_escape_code
  * Foreground colors only, 8 normal, 8 bright/bold
  */
 namespace CLR
