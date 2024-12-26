@@ -84,6 +84,25 @@ namespace io
 
 		return buffer;
 	}
+
+	// Covert a span of any contiguous type to a span of bytes
+	template <class T>
+	auto as_byte_span(const std::span<const T> src) -> std::span<const std::byte>
+	{
+		auto byte_size  = sizeof(T) * src.size();
+		auto byte_start = reinterpret_cast<const std::byte *>(src.data());
+		return { byte_start, byte_size };
+	}
+
+	// Convert any object type to a span of bytes
+	template <class T>
+	auto as_byte_span(const T &src) -> std::span<const std::byte>
+	{
+		return std::span{
+			reinterpret_cast<const std::byte *>(&src),
+			sizeof(T)
+		};
+	}
 }
 
 /*
@@ -1298,7 +1317,7 @@ auto main() -> int
 
 	// Uniform data for shader
 	auto proj = app::make_perspective_projection(window_width, window_height);
-	frame::populate_uniform_buffer(vk_ctx, rndr, std::span{ reinterpret_cast<const std::byte *>(&proj), sizeof(app::projection) });
+	frame::populate_uniform_buffer(vk_ctx, rndr, io::as_byte_span(proj));
 
 	// Loop until the user closes the window
 	std::println("{}Starting main loop...{}", CLR::MAG, CLR::RESET);
