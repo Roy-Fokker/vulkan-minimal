@@ -66,9 +66,7 @@ namespace CLR
  */
 namespace io
 {
-	/*
-	 * Simple function to read a file in binary mode.
-	 */
+	// Simple function to read a file in binary mode.
 	auto read_file(const std::filesystem::path &filename) -> std::vector<std::byte>
 	{
 		std::println("{}Reading file: {}{}", CLR::BBLU, filename.string(), CLR::RESET);
