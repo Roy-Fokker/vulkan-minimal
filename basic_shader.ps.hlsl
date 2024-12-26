@@ -1,3 +1,4 @@
+// Pixel shader input structure, mirroring VSOUTPUT
 struct PSINPUT
 {
 	float4 position : SV_Position;
