@@ -1294,7 +1294,7 @@ auto main() -> int
 
 	// Initialize the render frame objects
 	auto rndr        = frame::init_frame(vk_ctx, shaders, sizeof(app::projection));
-	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.4f, 1.0f };
+	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.5f, 1.0f };
 
 	// Uniform data for shader
 	auto proj = app::make_perspective_projection(window_width, window_height);
