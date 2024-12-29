@@ -5,7 +5,7 @@
 #include <cassert>
 
 // Vulkan HPP header
-#include <Vulkan/vulkan.hpp>
+#include <vulkan/vulkan.hpp>
 
 // Vulkan Bootstrap header
 #include <VkBootstrap.h>
@@ -218,6 +218,9 @@ namespace base
 			break;
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
 			msgclr = CLR::WHT;
+			break;
+		default:
+			msgclr = CLR::RED;
 			break;
 		}
 
@@ -453,7 +456,7 @@ namespace base
 
 		ctx.swap_chain = vkb_sc.swapchain;
 		ctx.sc_extent  = vkb_sc.extent;
-		ctx.sc_format  = vk::Format{ vkb_sc.image_format };
+		ctx.sc_format  = static_cast<vk::Format>(vkb_sc.image_format);
 
 		std::ranges::for_each(vkb_sc.get_images().value(), [&](auto &&img) {
 			ctx.sc_images.push_back(img);
