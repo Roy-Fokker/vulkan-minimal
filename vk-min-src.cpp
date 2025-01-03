@@ -85,23 +85,34 @@ namespace io
 		return buffer;
 	}
 
-	// Covert a span of any contiguous type to a span of bytes
-	template <class T>
-	auto as_byte_span(const std::span<const T> src) -> std::span<const std::byte>
-	{
-		auto byte_size  = sizeof(T) * src.size();
-		auto byte_start = reinterpret_cast<const std::byte *>(src.data());
-		return { byte_start, byte_size };
-	}
+	// Convience alias for a span of bytes
+	using byte_span  = std::span<const std::byte>;
+	using byte_spans = std::span<byte_span>;
 
 	// Convert any object type to a span of bytes
 	template <class T>
-	auto as_byte_span(const T &src) -> std::span<const std::byte>
+	auto as_byte_span(const T &src) -> byte_span
 	{
 		return std::span{
 			reinterpret_cast<const std::byte *>(&src),
 			sizeof(T)
 		};
+	}
+
+	// Covert a any contiguous range type to a span of bytes
+	template <std::ranges::contiguous_range T>
+	auto as_byte_span(const T &src) -> byte_span
+	{
+		auto src_span   = std::span{ src };      // convert to a span,
+		auto byte_size  = src_span.size_bytes(); // so we can get size_bytes
+		auto byte_start = reinterpret_cast<const std::byte *>(src.data());
+		return { byte_start, byte_size };
+	}
+
+	// void pointer offset
+	auto offset_ptr(void *ptr, std::ptrdiff_t offset) -> void *
+	{
+		return reinterpret_cast<std::byte *>(ptr) + offset;
 	}
 }
 
