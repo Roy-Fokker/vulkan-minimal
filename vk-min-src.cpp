@@ -1012,12 +1012,19 @@ namespace frame
 	}
 
 	// Populate Uniform Buffer with data, in this example Perspective Projection Matrix
-	void populate_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, std::span<const std::byte> data)
+	void populate_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_spans data)
 	{
 		std::println("{}Populating Uniform Buffer.{}", CLR::CYN, CLR::RESET);
 
 		auto ubo_ptr = ctx.mem_allocator.mapMemory(rndr.ubo_allocation);
-		std::memcpy(ubo_ptr, data.data(), data.size());
+
+		auto offset = ptrdiff_t{ 0 };
+		for (auto &&sb : data)
+		{
+			std::memcpy(io::offset_ptr(ubo_ptr, offset), sb.data(), sb.size());
+			offset += sb.size();
+		}
+
 		ctx.mem_allocator.unmapMemory(rndr.ubo_allocation); // Unmap or flush to keep mapped object alive on CPU side.
 
 		std::println("{}Uniform Buffer populated.{}", CLR::CYN, CLR::RESET);
@@ -1303,6 +1310,19 @@ namespace app
 		auto proj         = glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 10.0f);
 		return projection{ .data = proj };
 	}
+
+	// Transform matrix for each triangle
+	struct transform
+	{
+		glm::mat4 data;
+	};
+
+	auto make_transform_matrix(glm::vec3 position) -> transform
+	{
+		return transform{
+			.data = glm::translate(glm::mat4(1.0f), position),
+		};
+	}
 }
 
 // Main entry point
@@ -1325,13 +1345,30 @@ auto main() -> int
 		.fragment = io::read_file("shaders/basic_shader.ps_6_4.spv"),
 	};
 
+	// Total size of uniform buffer
+	auto ubo_size = static_cast<uint32_t>(sizeof(app::projection) + (sizeof(app::transform) * /* Number of Triangles */ 3));
+
 	// Initialize the render frame objects
-	auto rndr        = frame::init_frame(vk_ctx, shaders, sizeof(app::projection));
+	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_size);
 	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.5f, 1.0f };
 
 	// Uniform data for shader
 	auto proj = app::make_perspective_projection(window_width, window_height);
-	frame::populate_uniform_buffer(vk_ctx, rndr, io::as_byte_span(proj));
+
+	auto transforms = std::array{
+		app::make_transform_matrix(glm::vec3(0.0f, 0.5f, 2.0f)),
+		app::make_transform_matrix(glm::vec3(-0.5f, -0.5f, 2.0f)),
+		app::make_transform_matrix(glm::vec3(0.5f, -0.5f, 2.0f)),
+	};
+
+	// Put the uniform data into a span array
+	auto ubo_data = std::array{
+		io::as_byte_span(proj),
+		io::as_byte_span(transforms),
+	};
+
+	// Send uniform data to gpu
+	frame::populate_uniform_buffer(vk_ctx, rndr, ubo_data);
 
 	// Loop until the user closes the window
 	std::println("{}Starting main loop...{}", CLR::MAG, CLR::RESET);
