@@ -594,6 +594,15 @@ namespace base
  */
 namespace frame
 {
+	struct gpu_buffer
+	{
+		vma::Allocation allocation;
+		vma::AllocationInfo info;
+		vk::Buffer buffer;
+		vk::DeviceSize address;
+		vk::DeviceSize size;
+	};
+
 	// This holds all the data required to render a frame
 	struct render_context
 	{
@@ -608,16 +617,11 @@ namespace frame
 		vk::DescriptorSetLayout descriptor_set_layout;
 		vk::DeviceSize descriptor_set_layout_size;
 		vk::DeviceSize descriptor_set_layout_offset;
-		vma::Allocation descriptor_allocation;
-		vk::Buffer descriptor_buffer;
-		vk::DeviceSize descriptor_buffer_addr;
+		gpu_buffer descriptor_buffer;
 		vk::PhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props;
 
 		// Created by create_uniform_buffer
-		vma::Allocation ubo_allocation;
-		vma::AllocationInfo ubo_info;
-		vk::Buffer ubo_buffer;
-		vk::DeviceSize ubo_buffer_addr;
+		std::vector<gpu_buffer> uniform_buffers;
 	};
 
 	// Structure to hold shader binary data, for vertex and fragment shaders
@@ -747,16 +751,16 @@ namespace frame
 			.pDynamicStates    = dynamic_states.data(),
 		};
 
-		// Descriptor Sets to use with the pipeline
-		// Only one descriptor set for now
-		auto descriptor_sets = std::array{
-			rndr.descriptor_set_layout,
+		// Descriptor Sets used by shaders
+		auto descriptor_set_layouts = std::array{
+			rndr.descriptor_set_layout, // UBO binding 0
+			rndr.descriptor_set_layout, // UBO binding 1
 		};
 
-		// Pipeline Layout
+		// Pipeline Layout with descriptor set layouts
 		auto pipeline_layout_info = vk::PipelineLayoutCreateInfo{
-			.setLayoutCount = static_cast<uint32_t>(descriptor_sets.size()),
-			.pSetLayouts    = descriptor_sets.data(),
+			.setLayoutCount = static_cast<uint32_t>(descriptor_set_layouts.size()),
+			.pSetLayouts    = descriptor_set_layouts.data(),
 		};
 		rndr.layout = ctx.device.createPipelineLayout(pipeline_layout_info);
 
@@ -926,7 +930,7 @@ namespace frame
 	void create_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		auto buffer_info = vk::BufferCreateInfo{
-			.size  = rndr.descriptor_set_layout_size,
+			.size  = rndr.descriptor_set_layout_size * 2, // There will be two uniform descriptor sets Projection and Transforms
 			.usage = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress,
 		};
 
@@ -935,50 +939,58 @@ namespace frame
 			.usage = vma::MemoryUsage::eAuto,
 		};
 
-		std::tie(rndr.descriptor_buffer, rndr.descriptor_allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info);
+		std::tie(rndr.descriptor_buffer.buffer, rndr.descriptor_buffer.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &rndr.descriptor_buffer.info);
 
 		auto buff_addr_info = vk::BufferDeviceAddressInfo{
-			.buffer = rndr.descriptor_buffer,
+			.buffer = rndr.descriptor_buffer.buffer,
 		};
-		rndr.descriptor_buffer_addr = ctx.device.getBufferAddress(buff_addr_info);
+		rndr.descriptor_buffer.address = ctx.device.getBufferAddress(buff_addr_info);
+		rndr.descriptor_buffer.size    = rndr.descriptor_buffer.info.size;
 
 		// Give the buffer a name for debugging
 		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
 		  .objectType   = vk::ObjectType::eBuffer,
-		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(rndr.descriptor_buffer)),
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(rndr.descriptor_buffer.buffer)),
 		  .pObjectName  = "Descriptor Buffer",
 		});
 
 		std::println("{}Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
-	void create_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, uint32_t size)
+	void create_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, std::span<uint32_t> sizes)
 	{
-		auto buffer_info = vk::BufferCreateInfo{
-			.size  = size,
-			.usage = vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
-		};
+		rndr.uniform_buffers.resize(sizes.size());
+		auto idx = 0u;
 
-		auto alloc_info = vma::AllocationCreateInfo{
-			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
-			.usage = vma::MemoryUsage::eAuto,
-		};
+		for (auto &&[ubo, size] : std::views::zip(rndr.uniform_buffers, sizes))
+		{
+			auto buffer_info = vk::BufferCreateInfo{
+				.size  = size,
+				.usage = vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+			};
 
-		std::tie(rndr.ubo_buffer, rndr.ubo_allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &rndr.ubo_info);
+			auto alloc_info = vma::AllocationCreateInfo{
+				.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
+				.usage = vma::MemoryUsage::eAuto,
+			};
 
-		auto buff_addr_info = vk::BufferDeviceAddressInfo{
-			.buffer = rndr.ubo_buffer,
-		};
-		rndr.ubo_buffer_addr = ctx.device.getBufferAddress(buff_addr_info);
+			std::tie(ubo.buffer, ubo.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &ubo.info);
 
-		// Give the buffer a name for debugging
-		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
-		  .objectType   = vk::ObjectType::eBuffer,
-		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(rndr.ubo_buffer)),
-		  .pObjectName  = "Uniform Buffer",
-		});
+			auto buff_addr_info = vk::BufferDeviceAddressInfo{
+				.buffer = ubo.buffer,
+			};
+			ubo.address = ctx.device.getBufferAddress(buff_addr_info);
+			ubo.size    = ubo.info.size;
 
-		std::println("{}Uniform Buffer created.{}", CLR::CYN, CLR::RESET);
+			// Give the buffer a name for debugging
+			ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+			  .objectType   = vk::ObjectType::eBuffer,
+			  .objectHandle = (uint64_t)(static_cast<VkBuffer>(ubo.buffer)),
+			  .pObjectName  = std::format("Uniform Buffer {}", idx++).c_str(),
+			});
+		}
+
+		std::println("{}Uniform Buffers created [{}].{}", CLR::CYN, idx, CLR::RESET);
 	}
 
 	// Populate Descriptor Buffer with Uniform Buffer Address and Size
@@ -986,27 +998,28 @@ namespace frame
 	{
 		std::println("{}Populating Descriptor Buffer.{}", CLR::CYN, CLR::RESET);
 
-		auto buff_addr_info = vk::BufferDeviceAddressInfo{
-			.buffer = rndr.ubo_buffer,
-		};
-		auto ubo_buff_addr = ctx.device.getBufferAddress(buff_addr_info);
+		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(rndr.descriptor_buffer.allocation);
+		for (auto &&[idx, ubo] : rndr.uniform_buffers | std::views::enumerate)
+		{
+			auto address_info = vk::DescriptorAddressInfoEXT{
+				.address = ubo.address,
+				.range   = ubo.size,
+				.format  = vk::Format::eUndefined,
+			};
 
-		auto address_info = vk::DescriptorAddressInfoEXT{
-			.address = ubo_buff_addr,
-			.range   = rndr.ubo_info.size,
-			.format  = vk::Format::eUndefined,
-		};
+			auto buff_descriptor_info = vk::DescriptorGetInfoEXT{
+				.type = vk::DescriptorType::eUniformBuffer,
+				.data = {
+				  .pUniformBuffer = &address_info,
+				},
+			};
 
-		auto buff_descriptor_info = vk::DescriptorGetInfoEXT{
-			.type = vk::DescriptorType::eUniformBuffer,
-			.data = {
-			  .pUniformBuffer = &address_info,
-			},
-		};
+			auto offset = idx * (rndr.descriptor_set_layout_offset + rndr.descriptor_set_layout_size); // Offset for each descriptor set for each UBO
 
-		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(rndr.descriptor_allocation);
-		ctx.device.getDescriptorEXT(&buff_descriptor_info, rndr.descriptor_buffer_props.uniformBufferDescriptorSize, descriptor_buffer_ptr);
-		ctx.mem_allocator.unmapMemory(rndr.descriptor_allocation); // Unmap or flush to keep mapped object alive on CPU side.
+			auto buff_ptr = io::offset_ptr(descriptor_buffer_ptr, offset);
+			ctx.device.getDescriptorEXT(&buff_descriptor_info, rndr.descriptor_buffer_props.uniformBufferDescriptorSize, buff_ptr);
+		}
+		ctx.mem_allocator.unmapMemory(rndr.descriptor_buffer.allocation); // Unmap or flush to keep mapped object alive on CPU side.
 
 		std::println("{}Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
@@ -1014,24 +1027,22 @@ namespace frame
 	// Populate Uniform Buffer with data, in this example Perspective Projection Matrix
 	void populate_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_spans data)
 	{
-		std::println("{}Populating Uniform Buffer.{}", CLR::CYN, CLR::RESET);
+		std::println("{}Populating Uniform Buffers.{}", CLR::CYN, CLR::RESET);
 
-		auto ubo_ptr = ctx.mem_allocator.mapMemory(rndr.ubo_allocation);
-
-		auto offset = ptrdiff_t{ 0 };
-		for (auto &&sb : data)
+		for (auto &&[ubo, ubo_data] : std::views::zip(rndr.uniform_buffers, data))
 		{
-			std::memcpy(io::offset_ptr(ubo_ptr, offset), sb.data(), sb.size());
-			offset += sb.size();
-		}
+			auto ubo_ptr = ctx.mem_allocator.mapMemory(ubo.allocation);
 
-		ctx.mem_allocator.unmapMemory(rndr.ubo_allocation); // Unmap or flush to keep mapped object alive on CPU side.
+			std::memcpy(ubo_ptr, ubo_data.data(), ubo_data.size());
+
+			ctx.mem_allocator.unmapMemory(ubo.allocation); // Unmap or flush to keep mapped object alive on CPU side.
+		}
 
 		std::println("{}Uniform Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Initialize all the per-frame objects
-	auto init_frame(const base::vulkan_context &ctx, const shader_binaries &shaders, uint32_t ubo_size) -> render_context
+	auto init_frame(const base::vulkan_context &ctx, const shader_binaries &shaders, io::byte_spans ubo_data) -> render_context
 	{
 		std::println("{}Initializing Frame...{}", CLR::CYN, CLR::RESET);
 		auto rndr = render_context{};
@@ -1039,9 +1050,16 @@ namespace frame
 		create_descriptor_set(ctx, rndr);
 		create_pipeline(ctx, rndr, shaders);
 		create_descriptor_buffer(ctx, rndr);
-		create_uniform_buffer(ctx, rndr, ubo_size);
+
+		// Create multiple uniform buffers using size of ubo_data
+		auto ubo_sizes = ubo_data | std::views::transform([](auto &&span_data) {
+			return static_cast<uint32_t>(span_data.size());
+		}) | std::ranges::to<std::vector>();
+
+		create_uniform_buffer(ctx, rndr, ubo_sizes);
 
 		populate_descriptor_buffer(ctx, rndr);
+		populate_uniform_buffer(ctx, rndr, ubo_data);
 
 		return rndr;
 	}
@@ -1055,8 +1073,12 @@ namespace frame
 		ctx.device.waitIdle();
 
 		// Destroy uniform buffer and descriptor buffer
-		ctx.mem_allocator.destroyBuffer(rndr.ubo_buffer, rndr.ubo_allocation);
-		ctx.mem_allocator.destroyBuffer(rndr.descriptor_buffer, rndr.descriptor_allocation);
+		for (auto &&ubo : rndr.uniform_buffers)
+		{
+			ctx.mem_allocator.destroyBuffer(ubo.buffer, ubo.allocation);
+		}
+		// ctx.mem_allocator.destroyBuffer(rndr.ubo_buffer, rndr.ubo_allocation);
+		ctx.mem_allocator.destroyBuffer(rndr.descriptor_buffer.buffer, rndr.descriptor_buffer.allocation);
 
 		// Destroy pipeline and layout
 		ctx.device.destroyPipelineLayout(rndr.layout);
@@ -1222,17 +1244,28 @@ namespace frame
 
 		// Descriptor Buffer Bindings data
 		auto desc_buff_binding_info = vk::DescriptorBufferBindingInfoEXT{
-			.address = rndr.descriptor_buffer_addr,                           // Address of the descriptor buffer
+			.address = rndr.descriptor_buffer.address,                        // Address of the descriptor buffer
 			.usage   = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT, // Type of Descriptor Buffer, must match descriptor bugger usage
 		};
-		auto desc_buff_set_idx = 0u;
-		auto desc_buff_offset  = vk::DeviceSize{ 0 };
 
 		// Bind Descriptor buffer
 		cb.bindDescriptorBuffersEXT(1, &desc_buff_binding_info);
+
+		auto desc_buff_set_idx = 0u;
+		auto desc_buff_offset  = vk::DeviceSize{ 0 };
+		// Set location of Projection data for shader, determined by desc_buff_offset
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
 		                                 0,
+		                                 1,
+		                                 &desc_buff_set_idx,
+		                                 &desc_buff_offset);
+
+		// Set location of Transform data for shader, determined by desc_buff_offset
+		desc_buff_offset = rndr.descriptor_set_layout_size;
+		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
+		                                 rndr.layout,
+		                                 1,
 		                                 1,
 		                                 &desc_buff_set_idx,
 		                                 &desc_buff_offset);
@@ -1345,13 +1378,6 @@ auto main() -> int
 		.fragment = io::read_file("shaders/basic_shader.ps_6_4.spv"),
 	};
 
-	// Total size of uniform buffer
-	auto ubo_size = static_cast<uint32_t>(sizeof(app::projection) + (sizeof(app::transform) * /* Number of Triangles */ 3));
-
-	// Initialize the render frame objects
-	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_size);
-	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.5f, 1.0f };
-
 	// Uniform data for shader
 	auto proj = app::make_perspective_projection(window_width, window_height);
 
@@ -1367,8 +1393,12 @@ auto main() -> int
 		io::as_byte_span(transforms),
 	};
 
+	// Initialize the render frame objects
+	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_data);
+	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.5f, 1.0f };
+
 	// Send uniform data to gpu
-	frame::populate_uniform_buffer(vk_ctx, rndr, ubo_data);
+	// frame::populate_uniform_buffer(vk_ctx, rndr, ubo_data);
 
 	// Loop until the user closes the window
 	std::println("{}Starting main loop...{}", CLR::MAG, CLR::RESET);
