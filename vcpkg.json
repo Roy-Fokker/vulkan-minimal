@@ -6,7 +6,8 @@
 		"vulkan-memory-allocator",
 		"vulkan-memory-allocator-hpp",
 		"glm",
-		"glfw3"
+		"glfw3",
+		"dds-ktx"
 	],
 	"vcpkg-configuration": {
 		"overlay-ports": [

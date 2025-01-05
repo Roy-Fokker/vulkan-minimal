@@ -23,6 +23,12 @@
 #define VMA_IMPLEMENTATION
 #include <vulkan-memory-allocator-hpp/vk_mem_alloc.hpp>
 
+// DDS and KTX texture file loader
+// Similar to VMA, DDSKTX_IMPLEMENT must be defined in exactly one translation unit
+// doesn't matter for this example, but it's good practice to define it in the same file as the implementation
+#define DDSKTX_IMPLEMENT
+#include "dds-ktx.h"
+
 // C++23 Standard Module import
 import std;
 
@@ -113,6 +119,18 @@ namespace io
 	auto offset_ptr(void *ptr, std::ptrdiff_t offset) -> void *
 	{
 		return reinterpret_cast<std::byte *>(ptr) + offset;
+	}
+
+	// Load DDS texture and create a vulkan image
+	void load_texture(const std::filesystem::path &filename)
+	{
+		auto texture_info      = ddsktx_texture_info{};
+		auto texture_parse_err = ddsktx_error{};
+
+		auto texture_file_data = read_file(filename);
+
+		auto result = ddsktx_parse(&texture_info, texture_file_data.data(), texture_file_data.size(), &texture_parse_err);
+		assert(result == true and "Failed to parse texture file data");
 	}
 }
 
