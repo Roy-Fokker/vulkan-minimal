@@ -1008,8 +1008,6 @@ namespace frame
 	// Populate Descriptor Buffer with Uniform Buffer Address and Size
 	void populate_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
-		std::println("{}Populating Descriptor Buffer.{}", CLR::CYN, CLR::RESET);
-
 		// Get pointer to CPU-side memory location
 		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(rndr.descriptor_buffer.allocation);
 
@@ -1041,11 +1039,9 @@ namespace frame
 		std::println("{}Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
 
-	// Populate Uniform Buffer with data, in this example Perspective Projection Matrix
+	// Populate Uniform Buffer with data, in this example Perspective Projection Matrix and Instance Transform Matrix
 	void populate_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_spans data)
 	{
-		std::println("{}Populating Uniform Buffers.{}", CLR::CYN, CLR::RESET);
-
 		for (auto &&[ubo, ubo_data] : std::views::zip(rndr.uniform_buffers, data))
 		{
 			auto ubo_ptr = ctx.mem_allocator.mapMemory(ubo.allocation);
@@ -1073,8 +1069,11 @@ namespace frame
 			return static_cast<uint32_t>(span_data.size());
 		}) | std::ranges::to<std::vector>();
 
+		// Creation of Uniform Buffer only need to know how big the buffer should be.
+		// Data is populated later
 		create_uniform_buffer(ctx, rndr, ubo_sizes);
 
+		// Populate descriptor and 2 uniform buffers
 		populate_descriptor_buffer(ctx, rndr);
 		populate_uniform_buffer(ctx, rndr, ubo_data);
 
@@ -1278,7 +1277,7 @@ namespace frame
 		// Set location of Projection data for shader, determined by desc_buff_offset
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
-		                                 0, // Binding: 0, Set: 0
+		                                 0, // Binding: from descriptor set layout, Set: 0
 		                                 1,
 		                                 &desc_buff_set_idx,
 		                                 &desc_buff_offset);
@@ -1287,7 +1286,7 @@ namespace frame
 		desc_buff_offset = rndr.descriptor_set_layout_size;
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
-		                                 1, // Binding: 0, Set: 1
+		                                 1, // Binding: from descriptor set layout, Set: 1
 		                                 1,
 		                                 &desc_buff_set_idx,
 		                                 &desc_buff_offset);
@@ -1418,9 +1417,6 @@ auto main() -> int
 	// Initialize the render frame objects
 	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_data);
 	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.5f, 1.0f };
-
-	// Send uniform data to gpu
-	// frame::populate_uniform_buffer(vk_ctx, rndr, ubo_data);
 
 	// Loop until the user closes the window
 	std::println("{}Starting main loop...{}", CLR::MAG, CLR::RESET);
