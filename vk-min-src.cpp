@@ -73,7 +73,7 @@ namespace io
 
 		auto file = std::ifstream(filename, std::ios::in | std::ios::binary);
 
-		assert(file.good() && "failed to open file!");
+		assert(file.good() and "failed to open file!");
 
 		auto file_size = std::filesystem::file_size(filename);
 		auto buffer    = std::vector<std::byte>(file_size);
@@ -151,7 +151,7 @@ namespace glfw
 		                      [[maybe_unused]] int scancode,
 		                      int action,
 		                      [[maybe_unused]] int mods) {
-			if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+			if (key == GLFW_KEY_ESCAPE and action == GLFW_PRESS)
 			{
 				std::println("{}Escape key pressed. Closing window...{}", CLR::YEL, CLR::RESET);
 				glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -174,7 +174,7 @@ namespace glfw
 		                                              // example does not handle resize of Vulkan Surface/Swapchain
 
 		auto window = glfwCreateWindow(width, height, title.data(), nullptr, nullptr); // Create the window
-		assert(window != nullptr && "Failed to create GLFW window");
+		assert(window != nullptr and "Failed to create GLFW window");
 
 		glfw::close_window_on_escape(window); // Close the window on escape
 
@@ -303,7 +303,7 @@ namespace base
 		                      .set_debug_callback(debug_callback)
 		                      .require_api_version(1, 3, 0)
 		                      .build();
-		assert(vkb_ib_ret.has_value() == true && "Failed to create Vulkan Instance");
+		assert(vkb_ib_ret.has_value() == true and "Failed to create Vulkan Instance");
 
 		auto vkb_inst = vkb_ib_ret.value();
 
@@ -329,7 +329,7 @@ namespace base
 		                            window,
 		                            nullptr,
 		                            reinterpret_cast<VkSurfaceKHR *>(&ctx.surface)));
-		assert(result == vk::Result::eSuccess && "Failed to create Vulkan Surface");
+		assert(result == vk::Result::eSuccess and "Failed to create Vulkan Surface");
 
 		std::println("{}Surface created.{}", CLR::GRN, CLR::RESET);
 	}
@@ -384,12 +384,12 @@ namespace base
 		                          .select();
 		if (not phy_dev_select.has_value())
 			std::println("Return value: {}", phy_dev_select.error().message());
-		assert(phy_dev_select.has_value() == true && "Failed to select Physical GPU");
+		assert(phy_dev_select.has_value() == true and "Failed to select Physical GPU");
 
 		// Enable the descriptor buffer extension features
 		auto phy_dev_ret = phy_dev_select.value();
 		auto res         = phy_dev_ret.enable_extension_features_if_present(descriptor_buffer_feature);
-		assert(res == true && "Failed to enable extension features on GPU");
+		assert(res == true and "Failed to enable extension features on GPU");
 
 		// Create the Vulkan Device, this is logical device based on physical device
 		auto device_builder = vkb::DeviceBuilder{ phy_dev_ret };
@@ -467,14 +467,22 @@ namespace base
 
 		ctx.swap_chain = vkb_sc.swapchain;
 		ctx.sc_extent  = vkb_sc.extent;
-		ctx.sc_format  = static_cast<vk::Format>(vkb_sc.image_format);
+		ctx.sc_format  = static_cast<vk::Format>(vkb_sc.image_format); // convert from enum to enum-class
 
-		std::ranges::for_each(vkb_sc.get_images().value(), [&](auto &&img) {
-			ctx.sc_images.push_back(img);
+		// Convert from vector of VkImage to vector of vk::Image
+		std::ranges::transform(
+			vkb_sc.get_images().value(),
+			std::back_inserter(ctx.sc_images),
+			[](auto &&img) {
+			return vk::Image(img);
 		});
 
-		std::ranges::for_each(vkb_sc.get_image_views().value(), [&](auto &&img_vw) {
-			ctx.sc_views.push_back(img_vw);
+		// Convert from vector of VkImageView to vector of vk::ImageView
+		std::ranges::transform(
+			vkb_sc.get_image_views().value(),
+			std::back_inserter(ctx.sc_views),
+			[](auto &&img_vw) {
+			return vk::ImageView(img_vw);
 		});
 
 		ctx.max_frame_count = static_cast<uint32_t>(ctx.sc_views.size());
@@ -509,17 +517,16 @@ namespace base
 	// Create a Command Pool and allocate Command Buffers for Graphics use
 	void create_command_pool(vulkan_context &ctx)
 	{
-		// Create Command Pool
+		// Create Graphics Command Pool
 		auto command_pool_info = vk::CommandPoolCreateInfo{
 			.flags            = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
 			.queueFamilyIndex = ctx.gfx_queue.family,
 		};
 		ctx.gfx_command_pool = ctx.device.createCommandPool(command_pool_info);
 
-		std::println("{}Graphics Command Pool created.{}",
-		             CLR::GRN, CLR::RESET);
+		std::println("{}Graphics Command Pool created.{}", CLR::GRN, CLR::RESET);
 
-		// Create Command Buffer
+		// Create Graphics Command Buffer
 		auto command_buffer_alloc_info = vk::CommandBufferAllocateInfo{
 			.commandPool        = ctx.gfx_command_pool,
 			.level              = vk::CommandBufferLevel::ePrimary,
@@ -527,8 +534,7 @@ namespace base
 		};
 		ctx.gfx_command_buffers = ctx.device.allocateCommandBuffers(command_buffer_alloc_info);
 
-		std::println("{}Command Buffers allocated.{}",
-		             CLR::GRN, CLR::RESET);
+		std::println("{}Command Buffers allocated.{}", CLR::GRN, CLR::RESET);
 	}
 
 	// Initialize Vulkan
@@ -753,8 +759,8 @@ namespace frame
 
 		// Descriptor Sets used by shaders
 		auto descriptor_set_layouts = std::array{
-			rndr.descriptor_set_layout, // UBO binding 0
-			rndr.descriptor_set_layout, // UBO binding 1
+			rndr.descriptor_set_layout, // UBO Set 0
+			rndr.descriptor_set_layout, // UBO Set 1
 		};
 
 		// Pipeline Layout with descriptor set layouts
@@ -796,7 +802,7 @@ namespace frame
 		};
 
 		auto result_value = ctx.device.createGraphicsPipeline(nullptr, pipeline_info);
-		assert(result_value.result == vk::Result::eSuccess && "Failed to create Graphics Pipeline");
+		assert(result_value.result == vk::Result::eSuccess and "Failed to create Graphics Pipeline");
 
 		rndr.pipeline = result_value.value;
 
@@ -806,8 +812,7 @@ namespace frame
 			ctx.device.destroyShaderModule(mod);
 		}
 
-		std::println("{}Pipeline created.{}",
-		             CLR::CYN, CLR::RESET);
+		std::println("{}Pipeline created.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Structure to make image_layout_transition easier to use
@@ -848,9 +853,9 @@ namespace frame
 		case il::ePresentSrcKHR:
 			return pf::eBottomOfPipe;
 		case il::eGeneral:
-			assert(false && "Don't know how to get a meaningful vk::PipelineStageFlags for VK_IMAGE_LAYOUT_GENERAL! Don't use it!");
+			assert(false and "Don't know how to get a meaningful vk::PipelineStageFlags for VK_IMAGE_LAYOUT_GENERAL! Don't use it!");
 		default:
-			assert(false && "Unknown layout flag");
+			assert(false and "Unknown layout flag");
 		}
 		return {};
 	}
@@ -880,9 +885,9 @@ namespace frame
 		case il::eTransferDstOptimal:
 			return af::eTransferWrite;
 		case il::eGeneral:
-			assert(false && "Don't know how to get a meaningful vk::AccessFlags for VK_IMAGE_LAYOUT_GENERAL! Don't use it!");
+			assert(false and "Don't know how to get a meaningful vk::AccessFlags for VK_IMAGE_LAYOUT_GENERAL! Don't use it!");
 		default:
-			assert(false && "Unknown layout flag");
+			assert(false and "Unknown layout flag");
 		}
 		return {};
 	}
@@ -910,8 +915,11 @@ namespace frame
 			.pBindings    = &desc_set_layout_binding,
 		};
 
-		rndr.descriptor_set_layout        = ctx.device.createDescriptorSetLayout(desc_set_layout_info);
-		rndr.descriptor_set_layout_size   = ctx.device.getDescriptorSetLayoutSizeEXT(rndr.descriptor_set_layout);
+		// Create the set_layout object
+		rndr.descriptor_set_layout = ctx.device.createDescriptorSetLayout(desc_set_layout_info);
+		// Size of descriptor set layout
+		rndr.descriptor_set_layout_size = ctx.device.getDescriptorSetLayoutSizeEXT(rndr.descriptor_set_layout);
+		// Offset of descriptor set layout, based on binding value, I think.
 		rndr.descriptor_set_layout_offset = ctx.device.getDescriptorSetLayoutBindingOffsetEXT(rndr.descriptor_set_layout, binding);
 
 		// Get descriptor buffer properties
@@ -930,22 +938,24 @@ namespace frame
 	void create_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		auto buffer_info = vk::BufferCreateInfo{
-			.size  = rndr.descriptor_set_layout_size * 2, // There will be two uniform descriptor sets Projection and Transforms
-			.usage = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+			.size  = rndr.descriptor_set_layout_size * 2,                  // There will be two uniform descriptor sets Projection and Transforms
+			.usage = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT // This is a descriptor buffer
+			       | vk::BufferUsageFlagBits::eShaderDeviceAddress,        // Need to be able to get GPU memory address
 		};
 
 		auto alloc_info = vma::AllocationCreateInfo{
 			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
-			.usage = vma::MemoryUsage::eAuto,
+			.usage = vma::MemoryUsage::eAuto, // let VMA figure out what's optimal place.
 		};
 
+		// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
 		std::tie(rndr.descriptor_buffer.buffer, rndr.descriptor_buffer.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &rndr.descriptor_buffer.info);
 
 		auto buff_addr_info = vk::BufferDeviceAddressInfo{
 			.buffer = rndr.descriptor_buffer.buffer,
 		};
-		rndr.descriptor_buffer.address = ctx.device.getBufferAddress(buff_addr_info);
-		rndr.descriptor_buffer.size    = rndr.descriptor_buffer.info.size;
+		rndr.descriptor_buffer.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
+		rndr.descriptor_buffer.size    = rndr.descriptor_buffer.info.size;            // This is probably unnecessary, seems to just duplicate AllocationInfo
 
 		// Give the buffer a name for debugging
 		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
@@ -966,21 +976,23 @@ namespace frame
 		{
 			auto buffer_info = vk::BufferCreateInfo{
 				.size  = size,
-				.usage = vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+				.usage = vk::BufferUsageFlagBits::eUniformBuffer        // So far, we only have Uniform Buffers
+				       | vk::BufferUsageFlagBits::eShaderDeviceAddress, // We want to be able to get GPU side memory address for this object
 			};
 
 			auto alloc_info = vma::AllocationCreateInfo{
 				.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
-				.usage = vma::MemoryUsage::eAuto,
+				.usage = vma::MemoryUsage::eAuto, // let VMA figure out what's optimal place.
 			};
 
+			// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
 			std::tie(ubo.buffer, ubo.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &ubo.info);
 
 			auto buff_addr_info = vk::BufferDeviceAddressInfo{
 				.buffer = ubo.buffer,
 			};
-			ubo.address = ctx.device.getBufferAddress(buff_addr_info);
-			ubo.size    = ubo.info.size;
+			ubo.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
+			ubo.size    = ubo.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
 
 			// Give the buffer a name for debugging
 			ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
@@ -998,28 +1010,33 @@ namespace frame
 	{
 		std::println("{}Populating Descriptor Buffer.{}", CLR::CYN, CLR::RESET);
 
+		// Get pointer to CPU-side memory location
 		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(rndr.descriptor_buffer.allocation);
+
 		for (auto &&[idx, ubo] : rndr.uniform_buffers | std::views::enumerate)
 		{
 			auto address_info = vk::DescriptorAddressInfoEXT{
-				.address = ubo.address,
-				.range   = ubo.size,
+				.address = ubo.address, // UBO device address
+				.range   = ubo.size,    // UBO device size
 				.format  = vk::Format::eUndefined,
 			};
 
 			auto buff_descriptor_info = vk::DescriptorGetInfoEXT{
-				.type = vk::DescriptorType::eUniformBuffer,
+				.type = vk::DescriptorType::eUniformBuffer, // So far we only have Uniform Buffers
 				.data = {
 				  .pUniformBuffer = &address_info,
 				},
 			};
 
-			auto offset = idx * (rndr.descriptor_set_layout_offset + rndr.descriptor_set_layout_size); // Offset for each descriptor set for each UBO
+			auto offset   = idx * (rndr.descriptor_set_layout_offset + rndr.descriptor_set_layout_size); // Offset for each descriptor set for each UBO
+			auto buff_ptr = io::offset_ptr(descriptor_buffer_ptr, offset);                               // Get Offset Descriptor pointer
 
-			auto buff_ptr = io::offset_ptr(descriptor_buffer_ptr, offset);
+			// Write to descriptor buffer, the UBO location and size.
 			ctx.device.getDescriptorEXT(&buff_descriptor_info, rndr.descriptor_buffer_props.uniformBufferDescriptorSize, buff_ptr);
 		}
-		ctx.mem_allocator.unmapMemory(rndr.descriptor_buffer.allocation); // Unmap or flush to keep mapped object alive on CPU side.
+
+		// Send data to GPU
+		ctx.mem_allocator.unmapMemory(rndr.descriptor_buffer.allocation); // Unmap; or flush to keep mapped object alive on CPU side.
 
 		std::println("{}Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
@@ -1035,10 +1052,10 @@ namespace frame
 
 			std::memcpy(ubo_ptr, ubo_data.data(), ubo_data.size());
 
-			ctx.mem_allocator.unmapMemory(ubo.allocation); // Unmap or flush to keep mapped object alive on CPU side.
+			ctx.mem_allocator.unmapMemory(ubo.allocation); // Unmap; or flush to keep mapped object alive on CPU side.
 		}
 
-		std::println("{}Uniform Buffer populated.{}", CLR::CYN, CLR::RESET);
+		std::println("{}Uniform Buffers populated.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Initialize all the per-frame objects
@@ -1072,13 +1089,16 @@ namespace frame
 
 		ctx.device.waitIdle();
 
-		// Destroy uniform buffer and descriptor buffer
+		// Destroy uniform buffers
 		for (auto &&ubo : rndr.uniform_buffers)
 		{
 			ctx.mem_allocator.destroyBuffer(ubo.buffer, ubo.allocation);
 		}
-		// ctx.mem_allocator.destroyBuffer(rndr.ubo_buffer, rndr.ubo_allocation);
+		rndr.uniform_buffers.clear();
+
+		// Destroy descriptor buffer
 		ctx.mem_allocator.destroyBuffer(rndr.descriptor_buffer.buffer, rndr.descriptor_buffer.allocation);
+		rndr.descriptor_buffer = {};
 
 		// Destroy pipeline and layout
 		ctx.device.destroyPipelineLayout(rndr.layout);
@@ -1088,7 +1108,9 @@ namespace frame
 		ctx.device.destroyDescriptorSetLayout(rndr.descriptor_set_layout);
 	}
 
-	// Functions below get called Every Frame
+	/**
+	 * Functions below get called Every Frame
+	 */
 
 	// Add Pipeline Barrier to transition image from old_layout to new_layout
 	void image_layout_transition(vk::CommandBuffer cb, vk::Image image, const image_transition_info &iti)
@@ -1143,7 +1165,7 @@ namespace frame
 		auto fence_result = ctx.device.waitForFences(sync.in_flight_fence,
 		                                             true,
 		                                             wait_time);
-		assert(fence_result == vk::Result::eSuccess && "Failed to wait for fence");
+		assert(fence_result == vk::Result::eSuccess and "Failed to wait for fence");
 
 		// Reset Fence
 		ctx.device.resetFences(sync.in_flight_fence);
@@ -1163,7 +1185,7 @@ namespace frame
 		// Begin Command Buffer
 		auto cb_begin_info = vk::CommandBufferBeginInfo{};
 		auto cb_result     = cb.begin(&cb_begin_info);
-		assert(cb_result == vk::Result::eSuccess && "Failed to begin command buffer");
+		assert(cb_result == vk::Result::eSuccess and "Failed to begin command buffer");
 
 		// current draw image
 		auto draw_image = ctx.sc_images.at(ctx.current_frame);

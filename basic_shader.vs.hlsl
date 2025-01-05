@@ -18,7 +18,7 @@ struct Transforms
 {
 	float4x4 data[3];
 };
-// using Binding 1, Set 0
+// using Binding 0, Set 1
 ConstantBuffer<Transforms> transforms : register(b0, space1);
 
 VSOUTPUT main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
