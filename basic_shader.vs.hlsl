@@ -21,13 +21,13 @@ struct Transforms
 // using Binding 1, Set 0
 ConstantBuffer<Transforms> transforms : register(b0, space1);
 
-VSOUTPUT main(uint vertex_id : SV_VertexID)
+VSOUTPUT main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
 {
 	// Triangle vertices
 	float3 tri_pos[3] = {
-		{0.5f, -0.5f, 1.5f},
-		{-0.5f, -0.5f, 1.5f},
-		{0.f, 0.5f, 1.5f},
+		{0.5f, -0.5f, 0.f},
+		{-0.5f, -0.5f, 0.f},
+		{0.f, 0.5f, 0.f},
 	};
 
 	// Triangle colors per vertex
@@ -38,7 +38,7 @@ VSOUTPUT main(uint vertex_id : SV_VertexID)
 	};
 
 	// select transform matrix using instance_id
-	float4x4 transform = transforms.data[0];
+	float4x4 transform = transforms.data[instance_id];
 
 	// select vertex position using vertex_id
 	float4 pos = float4(tri_pos[vertex_id], 1.f);

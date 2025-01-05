@@ -890,7 +890,7 @@ namespace frame
 	// Create Descriptor Set
 	void create_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
 	{
-		constexpr auto binding = 0u;
+		constexpr auto binding = 0u; // Binding number for the descriptor set, i.e register(b0, space#) in HLSL
 
 		// return value such that 'size' is adjusted to match the memory 'alignment' requirements of the device
 		auto align_size = [](vk::DeviceSize size, vk::DeviceSize alignment) -> vk::DeviceSize {
@@ -1256,7 +1256,7 @@ namespace frame
 		// Set location of Projection data for shader, determined by desc_buff_offset
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
-		                                 0,
+		                                 0, // Binding: 0, Set: 0
 		                                 1,
 		                                 &desc_buff_set_idx,
 		                                 &desc_buff_offset);
@@ -1265,13 +1265,13 @@ namespace frame
 		desc_buff_offset = rndr.descriptor_set_layout_size;
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
-		                                 1,
+		                                 1, // Binding: 0, Set: 1
 		                                 1,
 		                                 &desc_buff_set_idx,
 		                                 &desc_buff_offset);
 
 		// Draw the triangle, verticies for which is embedded in Vertex Shader
-		cb.draw(3, 1, 0, 0);
+		cb.draw(3, 3, 0, 0);
 
 		// End Rendering
 		cb.endRendering();
@@ -1382,9 +1382,9 @@ auto main() -> int
 	auto proj = app::make_perspective_projection(window_width, window_height);
 
 	auto transforms = std::array{
-		app::make_transform_matrix(glm::vec3(0.0f, 0.5f, 2.0f)),
-		app::make_transform_matrix(glm::vec3(-0.5f, -0.5f, 2.0f)),
-		app::make_transform_matrix(glm::vec3(0.5f, -0.5f, 2.0f)),
+		app::make_transform_matrix(glm::vec3(0.0f, 0.5f, 4.0f)),
+		app::make_transform_matrix(glm::vec3(-0.5f, -0.5f, 4.0f)),
+		app::make_transform_matrix(glm::vec3(0.5f, -0.5f, 4.0f)),
 	};
 
 	// Put the uniform data into a span array
