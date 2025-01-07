@@ -121,16 +121,35 @@ namespace io
 		return reinterpret_cast<std::byte *>(ptr) + offset;
 	}
 
-	// Load DDS texture and create a vulkan image
-	void load_texture(const std::filesystem::path &filename)
+	// structure to hold file data in memory
+	struct texture
 	{
+		ddsktx_texture_info header_info;
+		std::vector<std::byte> data;
+	};
+
+	// Load DDS texture and create a vulkan image
+	auto load_texture(const std::filesystem::path &filename) -> texture
+	{
+		auto texture_file_data = read_file(filename);
+
 		auto texture_info      = ddsktx_texture_info{};
 		auto texture_parse_err = ddsktx_error{};
 
-		auto texture_file_data = read_file(filename);
-
-		auto result = ddsktx_parse(&texture_info, texture_file_data.data(), texture_file_data.size(), &texture_parse_err);
+		// Parse the DDS file
+		auto result = ddsktx_parse(
+			&texture_info,
+			texture_file_data.data(),
+			static_cast<int>(texture_file_data.size()),
+			&texture_parse_err);
 		assert(result == true and "Failed to parse texture file data");
+
+		// Remove header data from file_data in-memory.
+		auto img_start_itr = std::begin(texture_file_data);
+		texture_file_data.erase(img_start_itr, img_start_itr + texture_info.data_offset);
+		texture_file_data.shrink_to_fit();
+
+		return { texture_info, texture_file_data };
 	}
 }
 
@@ -646,6 +665,9 @@ namespace frame
 
 		// Created by create_uniform_buffer
 		std::vector<gpu_buffer> uniform_buffers;
+
+		// Created by create_texture_buffer
+		gpu_buffer texture_buffer;
 	};
 
 	// Structure to hold shader binary data, for vertex and fragment shaders
@@ -1072,8 +1094,56 @@ namespace frame
 		std::println("{}Uniform Buffers populated.{}", CLR::CYN, CLR::RESET);
 	}
 
+	// Create texture buffer
+	void create_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, uint32_t tex_size)
+	{
+		auto &tex = rndr.texture_buffer;
+
+		auto buffer_info = vk::BufferCreateInfo{
+			.size  = tex_size,
+			.usage = vk::BufferUsageFlagBits::eTransferSrc          // We will transfer this to vk::Image
+			       | vk::BufferUsageFlagBits::eShaderDeviceAddress, // We want to be able to get GPU side memory address for this object
+		};
+
+		auto alloc_info = vma::AllocationCreateInfo{
+			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
+			.usage = vma::MemoryUsage::eAuto, // let VMA figure out what's optimal place.
+		};
+
+		// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
+		std::tie(tex.buffer, tex.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &tex.info);
+
+		auto buff_addr_info = vk::BufferDeviceAddressInfo{
+			.buffer = tex.buffer,
+		};
+		tex.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
+		tex.size    = tex.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
+
+		// Give the buffer a name for debugging
+		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+		  .objectType   = vk::ObjectType::eBuffer,
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(tex.buffer)),
+		  .pObjectName  = "Texture Buffer",
+		});
+
+		std::println("{}Texture Buffer created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void populate_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_span tex_data)
+	{
+		auto &tex = rndr.texture_buffer;
+
+		auto tex_ptr = ctx.mem_allocator.mapMemory(tex.allocation);
+
+		std::memcpy(tex_ptr, tex_data.data(), tex_data.size());
+
+		ctx.mem_allocator.unmapMemory(tex.allocation);
+
+		std::println("{}Texture Buffer populated.{}", CLR::CYN, CLR::RESET);
+	}
+
 	// Initialize all the per-frame objects
-	auto init_frame(const base::vulkan_context &ctx, const shader_binaries &shaders, io::byte_spans ubo_data) -> render_context
+	auto init_frame(const base::vulkan_context &ctx, const shader_binaries &shaders, io::byte_spans ubo_data, const io::texture &tex_data) -> render_context
 	{
 		std::println("{}Initializing Frame...{}", CLR::CYN, CLR::RESET);
 		auto rndr = render_context{};
@@ -1091,9 +1161,14 @@ namespace frame
 		// Data is populated later
 		create_uniform_buffer(ctx, rndr, ubo_sizes);
 
-		// Populate descriptor and 2 uniform buffers
+		// Creation of Texture Buffer to hold image data
+		// actual data populated later
+		create_texture_buffer(ctx, rndr, tex_data.header_info.size_bytes);
+
+		// Populate descriptor, uniform and texture buffers
 		populate_descriptor_buffer(ctx, rndr);
 		populate_uniform_buffer(ctx, rndr, ubo_data);
+		populate_texture_buffer(ctx, rndr, tex_data.data);
 
 		return rndr;
 	}
@@ -1105,6 +1180,10 @@ namespace frame
 		std::println("{}Destroying Frame...{}", CLR::CYN, CLR::RESET);
 
 		ctx.device.waitIdle();
+
+		// Destroy texture buffer
+		ctx.mem_allocator.destroyBuffer(rndr.texture_buffer.buffer, rndr.texture_buffer.allocation);
+		rndr.texture_buffer = {};
 
 		// Destroy uniform buffers
 		for (auto &&ubo : rndr.uniform_buffers)
@@ -1417,6 +1496,9 @@ auto main() -> int
 		.fragment = io::read_file("shaders/basic_shader.ps_6_4.spv"),
 	};
 
+	// Load Texture Asset
+	auto tex_data = io::load_texture("data/uv_grid.dds");
+
 	// Uniform data for shader
 	auto proj = app::make_perspective_projection(window_width, window_height);
 
@@ -1433,7 +1515,7 @@ auto main() -> int
 	};
 
 	// Initialize the render frame objects
-	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_data);
+	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_data, tex_data);
 	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.5f, 1.0f };
 
 	// Loop until the user closes the window
