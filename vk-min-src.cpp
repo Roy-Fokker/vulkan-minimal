@@ -326,6 +326,10 @@ namespace base
 		// Created by create_command_pool
 		vk::CommandPool gfx_command_pool;
 		std::vector<vk::CommandBuffer> gfx_command_buffers;
+
+		// Created by create_command_pool
+		vk::CommandPool tfr_command_pool;
+		vk::CommandBuffer tfr_command_buffer;
 	};
 
 	// Create a Vulkan Instance using VK-Bootstrap
@@ -573,7 +577,23 @@ namespace base
 		};
 		ctx.gfx_command_buffers = ctx.device.allocateCommandBuffers(command_buffer_alloc_info);
 
-		std::println("{}Command Buffers allocated.{}", CLR::GRN, CLR::RESET);
+		std::println("{}Graphics Command Buffers allocated.{}", CLR::GRN, CLR::RESET);
+
+		// Create Transfer Command Pool
+		command_pool_info.queueFamilyIndex = ctx.transfer_queue.family;
+		ctx.tfr_command_pool               = ctx.device.createCommandPool(command_pool_info);
+		std::println("{}Transfer Command Pool created.{}", CLR::GRN, CLR::RESET);
+
+		// Create Tranfer Command Buffer
+		command_buffer_alloc_info = vk::CommandBufferAllocateInfo{
+			.commandPool        = ctx.tfr_command_pool,
+			.level              = vk::CommandBufferLevel::ePrimary,
+			.commandBufferCount = 1,
+		};
+		auto tfr_cbs           = ctx.device.allocateCommandBuffers(command_buffer_alloc_info);
+		ctx.tfr_command_buffer = tfr_cbs.front();
+
+		std::println("{}Transfer Command Buffer allocated.{}", CLR::GRN, CLR::RESET);
 	}
 
 	// Initialize Vulkan
@@ -601,6 +621,9 @@ namespace base
 		ctx.device.waitIdle();
 
 		// Destroy Command Pool and Buffers
+		ctx.tfr_command_buffer = nullptr;
+		ctx.device.destroyCommandPool(ctx.tfr_command_pool);
+
 		ctx.gfx_command_buffers.clear();
 		ctx.device.destroyCommandPool(ctx.gfx_command_pool);
 
