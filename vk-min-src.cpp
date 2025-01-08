@@ -96,18 +96,16 @@ namespace io
 	using byte_spans = std::span<byte_span>;
 
 	// Convert any object type to a span of bytes
-	template <class T>
-	auto as_byte_span(const T &src) -> byte_span
+		auto as_byte_span(const auto &src) -> byte_span
 	{
 		return std::span{
 			reinterpret_cast<const std::byte *>(&src),
-			sizeof(T)
+			sizeof(src)
 		};
 	}
 
 	// Covert a any contiguous range type to a span of bytes
-	template <std::ranges::contiguous_range T>
-	auto as_byte_span(const T &src) -> byte_span
+	auto as_byte_span(const std::ranges::contiguous_range auto &src) -> byte_span
 	{
 		auto src_span   = std::span{ src };      // convert to a span,
 		auto byte_size  = src_span.size_bytes(); // so we can get size_bytes
