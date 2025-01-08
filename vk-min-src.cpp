@@ -490,6 +490,9 @@ namespace base
 		auto width    = sfc_prop.currentExtent.width;
 		auto height   = sfc_prop.currentExtent.height;
 
+		// When debugging, enable VSync, else no VSync
+		auto present_mode = (use_vulkan_validation_layers) ? vk::PresentModeKHR::eFifo : vk::PresentModeKHR::eImmediate;
+
 		auto sc_builder = vkb::SwapchainBuilder{ ctx.chosen_gpu, ctx.device, ctx.surface };
 		auto vkb_sc     = sc_builder
 		                  .set_desired_format({
@@ -497,6 +500,7 @@ namespace base
 							.colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
 						  })
 		                  .set_desired_extent(width, height)
+		                  .set_desired_present_mode(static_cast<VkPresentModeKHR>(present_mode)) // Cast from C++ to C
 		                  .build()
 		                  .value();
 
