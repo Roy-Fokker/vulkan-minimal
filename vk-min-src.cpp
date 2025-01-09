@@ -1261,6 +1261,137 @@ namespace frame
 		std::println("{}Texture Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
 
+	auto ddsktxfmt_to_vkfmt(ddsktx_format fmt) -> vk::Format
+	{
+		switch (fmt)
+		{
+			using vf = vk::Format;
+		case DDSKTX_FORMAT_BC1: // DXT1
+			return vf::eBc1RgbUnormBlock;
+		case DDSKTX_FORMAT_BC2: // DXT3
+			return vf::eBc2UnormBlock;
+		case DDSKTX_FORMAT_BC3: // DXT5
+			return vf::eBc3UnormBlock;
+		case DDSKTX_FORMAT_BC4: // ATI1
+			return vf::eBc4UnormBlock;
+		case DDSKTX_FORMAT_BC5: // ATI2
+			return vf::eBc5UnormBlock;
+		case DDSKTX_FORMAT_BC6H: // BC6H
+			return vf::eBc6HSfloatBlock;
+		case DDSKTX_FORMAT_BC7: // BC7
+			return vf::eBc7UnormBlock;
+		default:
+			break;
+		}
+
+		assert(false and "Unmapped ddsktx_format, no conversion available");
+		return vk::Format::eUndefined;
+	}
+
+	// Create vk::Image to hold Texture for shader
+	void create_texture_image(const base::vulkan_context &ctx, render_context &rndr, ddsktx_texture_info image_hdr)
+	{
+		auto &img = rndr.texture_image;
+
+		img.format = ddsktxfmt_to_vkfmt(image_hdr.format);
+		img.extent = vk::Extent3D{
+			.width  = static_cast<uint32_t>(image_hdr.width),
+			.height = static_cast<uint32_t>(image_hdr.height),
+			.depth  = static_cast<uint32_t>(image_hdr.depth),
+		};
+		img.aspect_mask = vk::ImageAspectFlagBits::eColor;
+
+		// Create Image
+		auto image_info = vk::ImageCreateInfo{
+			.imageType   = vk::ImageType::e2D,
+			.format      = img.format,
+			.extent      = img.extent,
+			.mipLevels   = static_cast<uint32_t>(image_hdr.num_mips),
+			.arrayLayers = static_cast<uint32_t>(image_hdr.num_layers),
+			.usage       = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+		};
+
+		auto alloc_info = vma::AllocationCreateInfo{
+			.usage         = vma::MemoryUsage::eAuto,
+			.requiredFlags = vk::MemoryPropertyFlagBits::eDeviceLocal
+		};
+
+		std::tie(img.image, img.allocation) = ctx.mem_allocator.createImage(image_info, alloc_info);
+
+		// Create ImageView
+		auto view_info = vk::ImageViewCreateInfo{
+			.image      = img.image,
+			.viewType   = vk::ImageViewType::e2D,
+			.format     = img.format,
+			.components = {
+			  .r = vk::ComponentSwizzle::eIdentity,
+			  .g = vk::ComponentSwizzle::eIdentity,
+			  .b = vk::ComponentSwizzle::eIdentity,
+			  .a = vk::ComponentSwizzle::eIdentity,
+			},
+			.subresourceRange = {
+			  .aspectMask     = img.aspect_mask,
+			  .baseMipLevel   = 0,
+			  .levelCount     = static_cast<uint32_t>(image_hdr.num_mips),
+			  .baseArrayLayer = 0,
+			  .layerCount     = static_cast<uint32_t>(image_hdr.num_layers),
+			},
+		};
+
+		img.view = ctx.device.createImageView(view_info);
+
+		std::println("{}GPU Texture Image and View created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void copy_texture_buffer_to_image(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		auto &cb  = ctx.tfr_command_buffer;
+		auto &img = rndr.texture_image;
+		auto &tb  = rndr.texture_buffer;
+
+		// Reset Tranfer queue fence
+		ctx.device.resetFences(ctx.tfr_in_flight_fence);
+
+		// Reset transfer command buffer
+		cb.reset();
+		auto cb_begin_info = vk::CommandBufferBeginInfo{};
+		// Begin recording new transfer commands
+		auto cb_result = cb.begin(&cb_begin_info);
+		assert(cb_result == vk::Result::eSuccess and "Failed to begin transfer command buffer");
+
+		image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+
+		auto copy_region = vk::BufferImageCopy{
+			.imageSubresource = {
+			  .aspectMask     = img.aspect_mask,
+			  .mipLevel       = 0,
+			  .baseArrayLayer = 0,
+			  .layerCount     = 1,
+			},
+			.imageExtent = img.extent,
+		};
+		cb.copyBufferToImage(tb.buffer, img.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
+
+		image_layout_transition(cb, img.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+		// End recording
+		cb.end();
+
+		// Submit to Transfer Queue
+		auto cb_submit_info = vk::CommandBufferSubmitInfo{
+			.commandBuffer = cb,
+		};
+		auto submit_info = vk::SubmitInfo2{
+			.commandBufferInfoCount = 1,
+			.pCommandBufferInfos    = &cb_submit_info,
+		};
+		ctx.transfer_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
+
+		// Wait for submission to finish
+		auto fence_result = ctx.device.waitForFences(ctx.tfr_in_flight_fence, true, wait_time);
+		assert(fence_result == vk::Result::eSuccess and "Failed to wait for transfer fence");
+	}
+
 	// Initialize all the per-frame objects
 	auto init_frame(const base::vulkan_context &ctx, const shader_binaries &shaders, io::byte_spans ubo_data, const io::texture &tex_data) -> render_context
 	{
@@ -1284,10 +1415,15 @@ namespace frame
 		// actual data populated later
 		create_texture_buffer(ctx, rndr, tex_data.header_info.size_bytes);
 
+		// Creation of Image which is final destination of texture data
+		create_texture_image(ctx, rndr, tex_data.header_info);
+
 		// Populate descriptor, uniform and texture buffers
 		populate_descriptor_buffer(ctx, rndr);
 		populate_uniform_buffer(ctx, rndr, ubo_data);
 		populate_texture_buffer(ctx, rndr, tex_data.data);
+
+		copy_texture_buffer_to_image(ctx, rndr);
 
 		return rndr;
 	}
@@ -1299,6 +1435,11 @@ namespace frame
 		std::println("{}Destroying Frame...{}", CLR::CYN, CLR::RESET);
 
 		ctx.device.waitIdle();
+
+		// Destroy texture image
+		ctx.device.destroyImageView(rndr.texture_image.view);
+		ctx.mem_allocator.destroyImage(rndr.texture_image.image, rndr.texture_image.allocation);
+		rndr.texture_image = {};
 
 		// Destroy texture buffer
 		ctx.mem_allocator.destroyBuffer(rndr.texture_buffer.buffer, rndr.texture_buffer.allocation);
