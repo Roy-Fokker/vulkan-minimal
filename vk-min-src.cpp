@@ -1212,7 +1212,7 @@ namespace frame
 		std::println("{}Uniform Buffers populated.{}", CLR::CYN, CLR::RESET);
 	}
 
-	// Create texture buffer
+	// Create texture staging buffer
 	void create_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, uint32_t tex_size)
 	{
 		auto &tex = rndr.texture_buffer;
@@ -1247,6 +1247,7 @@ namespace frame
 		std::println("{}Texture Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
+// Populate texture staging buffer
 	void populate_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_span tex_data)
 	{
 		auto &tex = rndr.texture_buffer;
@@ -1279,7 +1280,7 @@ namespace frame
 		// Data is populated later
 		create_uniform_buffer(ctx, rndr, ubo_sizes);
 
-		// Creation of Texture Buffer to hold image data
+		// Creation of texture staging buffer to hold image data
 		// actual data populated later
 		create_texture_buffer(ctx, rndr, tex_data.header_info.size_bytes);
 
