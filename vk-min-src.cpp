@@ -682,6 +682,17 @@ namespace frame
 		vk::DeviceSize size;
 	};
 
+	// GPU Image structure
+	struct gpu_image
+	{
+		vma::Allocation allocation;
+		vk::Image image;
+		vk::ImageView view;
+		vk::Extent3D extent;
+		vk::Format format;
+		vk::ImageAspectFlags aspect_mask;
+	};
+
 	// This holds all the data required to render a frame
 	struct render_context
 	{
@@ -704,6 +715,9 @@ namespace frame
 
 		// Created by create_texture_buffer
 		gpu_buffer texture_buffer;
+
+		// Created by create_texture_image
+		gpu_image texture_image;
 	};
 
 	// Structure to hold shader binary data, for vertex and fragment shaders
@@ -966,6 +980,46 @@ namespace frame
 			assert(false and "Unknown layout flag");
 		}
 		return {};
+	}
+
+	// Add Pipeline Barrier to transition image from old_layout to new_layout
+	void image_layout_transition(vk::CommandBuffer cb, vk::Image image, const image_transition_info &iti)
+	{
+		auto image_memory_barrier = vk::ImageMemoryBarrier{
+			.srcAccessMask       = iti.src_access_mask,
+			.dstAccessMask       = iti.dst_access_mask,
+			.oldLayout           = iti.old_layout,
+			.newLayout           = iti.new_layout,
+			.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+			.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+			.image               = image,
+			.subresourceRange    = iti.subresource_range,
+		};
+
+		cb.pipelineBarrier(iti.src_stage_mask, iti.dst_stage_mask,
+		                   vk::DependencyFlags{},
+		                   {}, {},
+		                   { image_memory_barrier });
+	}
+
+	// overload image_layout_transition with fewer parameters
+	void image_layout_transition(vk::CommandBuffer cb,
+	                             vk::Image image,
+	                             vk::ImageLayout old_layout, vk::ImageLayout new_layout,
+	                             const vk::ImageSubresourceRange &subresource_range)
+	{
+		image_layout_transition(
+			cb,
+			image,
+			image_transition_info{
+			  .src_stage_mask    = get_pipeline_stage_flags(old_layout),
+			  .dst_stage_mask    = get_pipeline_stage_flags(new_layout),
+			  .src_access_mask   = get_access_flags(old_layout),
+			  .dst_access_mask   = get_access_flags(new_layout),
+			  .old_layout        = old_layout,
+			  .new_layout        = new_layout,
+			  .subresource_range = subresource_range,
+			});
 	}
 
 	// Create Descriptor Set
