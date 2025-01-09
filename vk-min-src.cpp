@@ -669,6 +669,10 @@ vk::Fence tfr_in_flight_fence;
  */
 namespace frame
 {
+	// Maximum time to wait for fence
+	constexpr auto wait_time = UINT_MAX;
+
+	// Basic GPU Memory Buffer structure
 	struct gpu_buffer
 	{
 		vma::Allocation allocation;
