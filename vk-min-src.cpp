@@ -1022,6 +1022,34 @@ namespace frame
 			});
 	}
 
+	void image_layout_transition(vk::CommandBuffer cb,
+	                             vk::Image image,
+	                             vk::ImageLayout old_layout, vk::ImageLayout new_layout)
+	{
+		auto aspect_mask          = (new_layout == vk::ImageLayout::eDepthAttachmentOptimal) ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
+		auto image_memory_barrier = vk::ImageMemoryBarrier2{
+			.srcStageMask     = vk::PipelineStageFlagBits2::eAllCommands,
+			.srcAccessMask    = vk::AccessFlagBits2::eMemoryWrite,
+			.dstStageMask     = vk::PipelineStageFlagBits2::eAllCommands,
+			.dstAccessMask    = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
+			.oldLayout        = old_layout,
+			.newLayout        = new_layout,
+			.image            = image,
+			.subresourceRange = {
+			  .aspectMask     = aspect_mask,
+			  .baseMipLevel   = 0,
+			  .levelCount     = vk::RemainingMipLevels,
+			  .baseArrayLayer = 0,
+			  .layerCount     = vk::RemainingArrayLayers,
+			}
+		};
+		auto dep_info = vk::DependencyInfo{
+			.imageMemoryBarrierCount = 1,
+			.pImageMemoryBarriers    = &image_memory_barrier,
+		};
+		cb.pipelineBarrier2(dep_info);
+	}
+
 	// Create Descriptor Set
 	void create_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
 	{
