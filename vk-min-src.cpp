@@ -322,6 +322,7 @@ namespace base
 
 		// Created by create_sync_objects
 		std::vector<synchronization> image_signals;
+vk::Fence tfr_in_flight_fence;
 
 		// Created by create_command_pool
 		vk::CommandPool gfx_command_pool;
@@ -553,6 +554,11 @@ namespace base
 			in_flight = ctx.device.createFence(fence_info);
 		}
 
+		auto tfr_fence_info = vk::FenceCreateInfo{
+			.flags = vk::FenceCreateFlagBits::eSignaled,
+		};
+		ctx.tfr_in_flight_fence = ctx.device.createFence(tfr_fence_info);
+
 		std::println("{}Semaphores and Fences created.{}",
 		             CLR::GRN, CLR::RESET);
 	}
@@ -628,6 +634,7 @@ namespace base
 		ctx.device.destroyCommandPool(ctx.gfx_command_pool);
 
 		// Destroy Semaphores and Fences
+		ctx.device.destroyFence(ctx.tfr_in_flight_fence);
 		for (auto &&[available, rendered, in_flight] : ctx.image_signals)
 		{
 			ctx.device.destroyFence(in_flight);
