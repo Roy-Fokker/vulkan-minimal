@@ -1337,7 +1337,7 @@ namespace frame
 		auto fence_result = ctx.device.waitForFences(sync.in_flight_fence,
 		                                             true,
 		                                             wait_time);
-		assert(fence_result == vk::Result::eSuccess and "Failed to wait for fence");
+		assert(fence_result == vk::Result::eSuccess and "Failed to wait for graphics fence");
 
 		// Reset Fence
 		ctx.device.resetFences(sync.in_flight_fence);
