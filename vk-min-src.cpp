@@ -738,6 +738,15 @@ namespace frame
 		uint32_t mipmap_levels;
 	};
 
+	// GPU Descriptor Set Buffer
+	struct gpu_descriptor
+	{
+		vk::DescriptorSetLayout layout;
+		vk::DeviceSize layout_size;
+		vk::DeviceSize layout_offset;
+		gpu_buffer buffer;
+	};
+
 	// This holds all the data required to render a frame
 	struct render_context
 	{
@@ -748,11 +757,8 @@ namespace frame
 		// Populated by main function
 		std::array<float, 4> clear_color;
 
-		// Created by create_descriptor_set
-		vk::DescriptorSetLayout descriptor_set_layout;
-		vk::DeviceSize descriptor_set_layout_size;
-		vk::DeviceSize descriptor_set_layout_offset;
-		gpu_buffer descriptor_buffer;
+		// Created by create_uniform_descriptor_set
+		gpu_descriptor uniform_descriptor;
 		vk::PhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props;
 
 		// Created by create_uniform_buffer
@@ -897,8 +903,8 @@ namespace frame
 
 		// Descriptor Sets used by shaders
 		auto descriptor_set_layouts = std::array{
-			rndr.descriptor_set_layout, // UBO Set 0
-			rndr.descriptor_set_layout, // UBO Set 1
+			rndr.uniform_descriptor.layout, // UBO Set 0
+			rndr.uniform_descriptor.layout, // UBO Set 1
 		};
 
 		// Pipeline Layout with descriptor set layouts
@@ -1098,15 +1104,18 @@ namespace frame
 		cb.pipelineBarrier2(dep_info);
 	}
 
-	// Create Descriptor Set
-	void create_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
+	// return value such that 'size' is adjusted to match the memory 'alignment' requirements of the device
+	auto align_size(vk::DeviceSize size, vk::DeviceSize alignment) -> vk::DeviceSize
 	{
-		constexpr auto binding = 0u; // Binding number for the descriptor set, i.e register(b0, space#) in HLSL
+		return (size + alignment - 1) & ~(alignment - 1);
+	}
 
-		// return value such that 'size' is adjusted to match the memory 'alignment' requirements of the device
-		auto align_size = [](vk::DeviceSize size, vk::DeviceSize alignment) -> vk::DeviceSize {
-			return (size + alignment - 1) & ~(alignment - 1);
-		};
+	// Create Descriptor Set
+	void create_uniform_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		auto &descriptor = rndr.uniform_descriptor;
+
+		constexpr auto binding = 0u; // Binding number for the descriptor set, i.e register(b0, space#) in HLSL
 
 		// Descriptor Set Layout for Uniform Buffer
 		auto desc_set_layout_binding = vk::DescriptorSetLayoutBinding{
@@ -1123,11 +1132,11 @@ namespace frame
 		};
 
 		// Create the set_layout object for Uniform Buffer
-		rndr.descriptor_set_layout = ctx.device.createDescriptorSetLayout(desc_set_layout_info);
+		descriptor.layout = ctx.device.createDescriptorSetLayout(desc_set_layout_info);
 		// Size of descriptor set layout for Uniform Buffer
-		rndr.descriptor_set_layout_size = ctx.device.getDescriptorSetLayoutSizeEXT(rndr.descriptor_set_layout);
+		descriptor.layout_size = ctx.device.getDescriptorSetLayoutSizeEXT(descriptor.layout);
 		// Offset of descriptor set layout, based on binding value, I think. for Uniform Buffer
-		rndr.descriptor_set_layout_offset = ctx.device.getDescriptorSetLayoutBindingOffsetEXT(rndr.descriptor_set_layout, binding);
+		descriptor.layout_offset = ctx.device.getDescriptorSetLayoutBindingOffsetEXT(descriptor.layout, binding);
 
 		// Get descriptor buffer properties
 		auto device_props = vk::PhysicalDeviceProperties2{
@@ -1136,16 +1145,19 @@ namespace frame
 		ctx.chosen_gpu.getProperties2(&device_props);
 
 		// Align the size to the required alignment
-		rndr.descriptor_set_layout_size = align_size(rndr.descriptor_set_layout_size, rndr.descriptor_buffer_props.descriptorBufferOffsetAlignment);
+		descriptor.layout_size = align_size(descriptor.layout_size, rndr.descriptor_buffer_props.descriptorBufferOffsetAlignment);
 
-		std::println("{}Descriptor Set created.{}", CLR::CYN, CLR::RESET);
+		std::println("{}Uniform buffer descriptor set created.{}", CLR::CYN, CLR::RESET);
+	}
 	}
 
 	// Create Descriptor Buffer and allocation
 	void create_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
+		auto &ubo = rndr.uniform_descriptor.buffer;
+
 		auto buffer_info = vk::BufferCreateInfo{
-			.size  = rndr.descriptor_set_layout_size * 2,                  // There will be two uniform descriptor sets Projection and Transforms
+			.size  = rndr.uniform_descriptor.layout_size * 2,              // There will be two uniform descriptor sets Projection and Transforms
 			.usage = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT // This is a descriptor buffer
 			       | vk::BufferUsageFlagBits::eShaderDeviceAddress,        // Need to be able to get GPU memory address
 		};
@@ -1156,18 +1168,18 @@ namespace frame
 		};
 
 		// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
-		std::tie(rndr.descriptor_buffer.buffer, rndr.descriptor_buffer.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &rndr.descriptor_buffer.info);
+		std::tie(ubo.buffer, ubo.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &ubo.info);
 
 		auto buff_addr_info = vk::BufferDeviceAddressInfo{
-			.buffer = rndr.descriptor_buffer.buffer,
+			.buffer = ubo.buffer,
 		};
-		rndr.descriptor_buffer.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
-		rndr.descriptor_buffer.size    = rndr.descriptor_buffer.info.size;            // This is probably unnecessary, seems to just duplicate AllocationInfo
+		ubo.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
+		ubo.size    = ubo.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
 
 		// Give the buffer a name for debugging
 		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
 		  .objectType   = vk::ObjectType::eBuffer,
-		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(rndr.descriptor_buffer.buffer)),
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(ubo.buffer)),
 		  .pObjectName  = "Descriptor Buffer",
 		});
 
@@ -1215,8 +1227,11 @@ namespace frame
 	// Populate Descriptor Buffer with Uniform Buffer Address and Size
 	void populate_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
+		auto &uds  = rndr.uniform_descriptor;
+		auto &dsbo = uds.buffer;
+
 		// Get pointer to CPU-side memory location
-		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(rndr.descriptor_buffer.allocation);
+		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(dsbo.allocation);
 
 		for (auto &&[idx, ubo] : rndr.uniform_buffers | std::views::enumerate)
 		{
@@ -1233,15 +1248,15 @@ namespace frame
 				},
 			};
 
-			auto offset   = idx * (rndr.descriptor_set_layout_offset + rndr.descriptor_set_layout_size); // Offset for each descriptor set for each UBO
-			auto buff_ptr = io::offset_ptr(descriptor_buffer_ptr, offset);                               // Get Offset Descriptor pointer
+			auto offset   = idx * (uds.layout_offset + uds.layout_size);   // Offset for each descriptor set for each UBO
+			auto buff_ptr = io::offset_ptr(descriptor_buffer_ptr, offset); // Get Offset Descriptor pointer
 
 			// Write to descriptor buffer, the UBO location and size.
 			ctx.device.getDescriptorEXT(&buff_descriptor_info, rndr.descriptor_buffer_props.uniformBufferDescriptorSize, buff_ptr);
 		}
 
 		// Send data to GPU
-		ctx.mem_allocator.unmapMemory(rndr.descriptor_buffer.allocation); // Unmap; or flush to keep mapped object alive on CPU side.
+		ctx.mem_allocator.unmapMemory(dsbo.allocation); // Unmap; or flush to keep mapped object alive on CPU side.
 
 		std::println("{}Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
@@ -1489,7 +1504,7 @@ namespace frame
 		std::println("{}Initializing Frame...{}", CLR::CYN, CLR::RESET);
 		auto rndr = render_context{};
 
-		create_descriptor_set(ctx, rndr);
+		create_uniform_descriptor_set(ctx, rndr);
 		create_pipeline(ctx, rndr, shaders);
 		create_descriptor_buffer(ctx, rndr);
 
@@ -1550,15 +1565,15 @@ namespace frame
 		rndr.uniform_buffers.clear();
 
 		// Destroy descriptor buffer
-		ctx.mem_allocator.destroyBuffer(rndr.descriptor_buffer.buffer, rndr.descriptor_buffer.allocation);
-		rndr.descriptor_buffer = {};
+		ctx.mem_allocator.destroyBuffer(rndr.uniform_descriptor.buffer.buffer, rndr.uniform_descriptor.buffer.allocation);
 
 		// Destroy pipeline and layout
 		ctx.device.destroyPipelineLayout(rndr.layout);
 		ctx.device.destroyPipeline(rndr.pipeline);
 
 		// Destroy descriptor set layout
-		ctx.device.destroyDescriptorSetLayout(rndr.descriptor_set_layout);
+		ctx.device.destroyDescriptorSetLayout(rndr.uniform_descriptor.layout);
+		rndr.uniform_descriptor = {};
 	}
 
 	/**
@@ -1676,7 +1691,7 @@ namespace frame
 
 		// Descriptor Buffer Bindings data
 		auto desc_buff_binding_info = vk::DescriptorBufferBindingInfoEXT{
-			.address = rndr.descriptor_buffer.address,                        // Address of the descriptor buffer
+			.address = rndr.uniform_descriptor.buffer.address,                // Address of the descriptor buffer
 			.usage   = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT, // Type of Descriptor Buffer, must match descriptor bugger usage
 		};
 
@@ -1694,7 +1709,7 @@ namespace frame
 		                                 &desc_buff_offset);
 
 		// Set location of Transform data for shader, determined by desc_buff_offset
-		desc_buff_offset = rndr.descriptor_set_layout_size;
+		desc_buff_offset = rndr.uniform_descriptor.layout_size;
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
 		                                 1, // Binding: from descriptor set layout, Set: 1
