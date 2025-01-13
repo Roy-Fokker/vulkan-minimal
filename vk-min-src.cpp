@@ -1296,20 +1296,6 @@ namespace frame
 		std::println("{}Texture Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
-// Populate texture staging buffer
-	void populate_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_span tex_data)
-	{
-		auto &tex = rndr.texture_buffer;
-
-		auto tex_ptr = ctx.mem_allocator.mapMemory(tex.allocation);
-
-		std::memcpy(tex_ptr, tex_data.data(), tex_data.size());
-
-		ctx.mem_allocator.unmapMemory(tex.allocation);
-
-		std::println("{}Texture Buffer populated.{}", CLR::CYN, CLR::RESET);
-	}
-
 	auto ddsktxfmt_to_vkfmt(ddsktx_format fmt) -> vk::Format
 	{
 		switch (fmt)
@@ -1393,6 +1379,51 @@ namespace frame
 		std::println("{}GPU Texture Image and View created.{}", CLR::CYN, CLR::RESET);
 	}
 
+	void create_texture_sampler(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		// Enable anisotropic filtering
+		// This feature is optional, so we must check if it's supported on the device
+		float max_anisotropy = 1.0f;
+		if (ctx.chosen_gpu.getFeatures().samplerAnisotropy)
+		{
+			// Use max. level of anisotropy for this example
+			max_anisotropy = ctx.chosen_gpu.getProperties().limits.maxSamplerAnisotropy;
+		}
+
+		auto sampler_info = vk::SamplerCreateInfo{
+			.magFilter        = vk::Filter::eNearest,
+			.minFilter        = vk::Filter::eNearest,
+			.mipmapMode       = vk::SamplerMipmapMode::eNearest,
+			.addressModeU     = vk::SamplerAddressMode::eClampToEdge,
+			.addressModeV     = vk::SamplerAddressMode::eClampToEdge,
+			.addressModeW     = vk::SamplerAddressMode::eClampToEdge,
+			.anisotropyEnable = true,
+			.maxAnisotropy    = max_anisotropy,
+			.compareEnable    = false,
+			.minLod           = 0,
+			.maxLod           = static_cast<float>(rndr.texture_image.mipmap_levels),
+			.borderColor      = vk::BorderColor::eFloatOpaqueWhite,
+		};
+
+		rndr.texture_sampler = ctx.device.createSampler(sampler_info);
+
+		std::println("{}Texture Sampler Created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	// Populate texture staging buffer
+	void populate_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_span tex_data)
+	{
+		auto &tex = rndr.texture_buffer;
+
+		auto tex_ptr = ctx.mem_allocator.mapMemory(tex.allocation);
+
+		std::memcpy(tex_ptr, tex_data.data(), tex_data.size());
+
+		ctx.mem_allocator.unmapMemory(tex.allocation);
+
+		std::println("{}Texture Buffer populated.{}", CLR::CYN, CLR::RESET);
+	}
+
 	void copy_texture_buffer_to_image(const base::vulkan_context &ctx, render_context &rndr, const std::vector<io::texture::sub_data> mips_info)
 	{
 		auto &cb  = ctx.tfr_command_buffer;
@@ -1450,37 +1481,6 @@ namespace frame
 		assert(fence_result == vk::Result::eSuccess and "Failed to wait for transfer fence.");
 
 		std::println("{}Copied GPU texture buffer to GPU image.{}", CLR::CYN, CLR::RESET);
-	}
-
-	void create_texture_sampler(const base::vulkan_context &ctx, render_context &rndr)
-	{
-		// Enable anisotropic filtering
-		// This feature is optional, so we must check if it's supported on the device
-		float max_anisotropy = 1.0f;
-		if (ctx.chosen_gpu.getFeatures().samplerAnisotropy)
-		{
-			// Use max. level of anisotropy for this example
-			max_anisotropy = ctx.chosen_gpu.getProperties().limits.maxSamplerAnisotropy;
-		}
-
-		auto sampler_info = vk::SamplerCreateInfo{
-			.magFilter        = vk::Filter::eNearest,
-			.minFilter        = vk::Filter::eNearest,
-			.mipmapMode       = vk::SamplerMipmapMode::eNearest,
-			.addressModeU     = vk::SamplerAddressMode::eClampToEdge,
-			.addressModeV     = vk::SamplerAddressMode::eClampToEdge,
-			.addressModeW     = vk::SamplerAddressMode::eClampToEdge,
-			.anisotropyEnable = true,
-			.maxAnisotropy    = max_anisotropy,
-			.compareEnable    = false,
-			.minLod           = 0,
-			.maxLod           = static_cast<float>(rndr.texture_image.mipmap_levels),
-			.borderColor      = vk::BorderColor::eFloatOpaqueWhite,
-		};
-
-		rndr.texture_sampler = ctx.device.createSampler(sampler_info);
-
-		std::println("{}Texture Sampler Created.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Initialize all the per-frame objects
