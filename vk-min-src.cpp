@@ -1108,6 +1108,7 @@ namespace frame
 			return (size + alignment - 1) & ~(alignment - 1);
 		};
 
+		// Descriptor Set Layout for Uniform Buffer
 		auto desc_set_layout_binding = vk::DescriptorSetLayoutBinding{
 			.binding         = binding,
 			.descriptorType  = vk::DescriptorType::eUniformBuffer, // What kind of descriptor set is this?
@@ -1121,11 +1122,11 @@ namespace frame
 			.pBindings    = &desc_set_layout_binding,
 		};
 
-		// Create the set_layout object
+		// Create the set_layout object for Uniform Buffer
 		rndr.descriptor_set_layout = ctx.device.createDescriptorSetLayout(desc_set_layout_info);
-		// Size of descriptor set layout
+		// Size of descriptor set layout for Uniform Buffer
 		rndr.descriptor_set_layout_size = ctx.device.getDescriptorSetLayoutSizeEXT(rndr.descriptor_set_layout);
-		// Offset of descriptor set layout, based on binding value, I think.
+		// Offset of descriptor set layout, based on binding value, I think. for Uniform Buffer
 		rndr.descriptor_set_layout_offset = ctx.device.getDescriptorSetLayoutBindingOffsetEXT(rndr.descriptor_set_layout, binding);
 
 		// Get descriptor buffer properties
