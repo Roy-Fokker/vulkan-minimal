@@ -122,7 +122,17 @@ namespace io
 	// structure to hold file data in memory
 	struct texture
 	{
+struct sub_data
+		{
+			uint32_t layer_idx;
+			uint32_t mip_idx;
+			uint32_t offset;
+			uint32_t width;
+			uint32_t height;
+		};
+
 		ddsktx_texture_info header_info;
+std::vector<sub_data> sub_info;
 		std::vector<std::byte> data;
 	};
 
@@ -142,12 +152,45 @@ namespace io
 			&texture_parse_err);
 		assert(result == true and "Failed to parse texture file data");
 
+		// Get Sub Data if file has mip maps
+		auto texture_sub_data = std::vector<texture::sub_data>{};
+		if (texture_info.num_mips > 0)
+		{
+			auto layer_rng = std::views::iota(0, texture_info.num_layers);
+			auto mip_rng   = std::views::iota(0, texture_info.num_mips);
+			auto img_str   = static_cast<void *>(texture_file_data.data());
+
+			for (auto [layer_idx, mip_idx] : std::views::cartesian_product(layer_rng, mip_rng))
+			{
+				auto sub_data = ddsktx_sub_data{};
+				ddsktx_get_sub(
+					&texture_info,
+					&sub_data,
+					texture_file_data.data(),
+					static_cast<int>(texture_file_data.size()),
+					layer_idx,
+					0,
+					mip_idx);
+
+				// Get distance from start of image data
+				auto sub_offset = static_cast<uint32_t>(uintptr_t(sub_data.buff) - uintptr_t(img_str) - texture_info.data_offset);
+
+				texture_sub_data.push_back(texture::sub_data{
+				  .layer_idx = static_cast<uint32_t>(layer_idx),
+				  .mip_idx   = static_cast<uint32_t>(mip_idx),
+				  .offset    = sub_offset,
+				  .width     = static_cast<uint32_t>(sub_data.width),
+				  .height    = static_cast<uint32_t>(sub_data.height),
+				});
+			}
+		}
+
 		// Remove header data from file_data in-memory.
 		auto img_start_itr = std::begin(texture_file_data);
 		texture_file_data.erase(img_start_itr, img_start_itr + texture_info.data_offset);
 		texture_file_data.shrink_to_fit();
 
-		return { texture_info, texture_file_data };
+		return { texture_info, texture_sub_data, texture_file_data };
 	}
 }
 
@@ -691,6 +734,7 @@ namespace frame
 		vk::Extent3D extent;
 		vk::Format format;
 		vk::ImageAspectFlags aspect_mask;
+		uint32_t mipmap_levels;
 	};
 
 	// This holds all the data required to render a frame
@@ -1299,14 +1343,15 @@ namespace frame
 			.height = static_cast<uint32_t>(image_hdr.height),
 			.depth  = static_cast<uint32_t>(image_hdr.depth),
 		};
-		img.aspect_mask = vk::ImageAspectFlagBits::eColor;
+		img.aspect_mask   = vk::ImageAspectFlagBits::eColor;
+		img.mipmap_levels = static_cast<uint32_t>(image_hdr.num_mips);
 
 		// Create Image
 		auto image_info = vk::ImageCreateInfo{
 			.imageType   = vk::ImageType::e2D,
 			.format      = img.format,
 			.extent      = img.extent,
-			.mipLevels   = static_cast<uint32_t>(image_hdr.num_mips),
+			.mipLevels   = img.mipmap_levels,
 			.arrayLayers = static_cast<uint32_t>(image_hdr.num_layers),
 			.usage       = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
 		};
@@ -1343,7 +1388,7 @@ namespace frame
 		std::println("{}GPU Texture Image and View created.{}", CLR::CYN, CLR::RESET);
 	}
 
-	void copy_texture_buffer_to_image(const base::vulkan_context &ctx, render_context &rndr)
+	void copy_texture_buffer_to_image(const base::vulkan_context &ctx, render_context &rndr, const std::vector<io::texture::sub_data> mips_info)
 	{
 		auto &cb  = ctx.tfr_command_buffer;
 		auto &img = rndr.texture_image;
@@ -1361,16 +1406,24 @@ namespace frame
 
 		image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 
-		auto copy_region = vk::BufferImageCopy{
+		auto copy_regions = std::vector<vk::BufferImageCopy>{};
+		std::ranges::transform(mips_info, std::back_inserter(copy_regions), [&](auto &info) {
+			return vk::BufferImageCopy{
+				.bufferOffset     = info.offset,
 			.imageSubresource = {
 			  .aspectMask     = img.aspect_mask,
-			  .mipLevel       = 0,
-			  .baseArrayLayer = 0,
+				  .mipLevel       = info.mip_idx,
+				  .baseArrayLayer = info.layer_idx,
 			  .layerCount     = 1,
 			},
-			.imageExtent = img.extent,
-		};
-		cb.copyBufferToImage(tb.buffer, img.image, vk::ImageLayout::eTransferDstOptimal, copy_region);
+				.imageExtent = {
+				  .width  = info.width,
+				  .height = info.height,
+				  .depth  = 1,
+				},
+			};
+		});
+		cb.copyBufferToImage(tb.buffer, img.image, vk::ImageLayout::eTransferDstOptimal, copy_regions);
 
 		image_layout_transition(cb, img.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
@@ -1423,7 +1476,7 @@ namespace frame
 		populate_uniform_buffer(ctx, rndr, ubo_data);
 		populate_texture_buffer(ctx, rndr, tex_data.data);
 
-		copy_texture_buffer_to_image(ctx, rndr);
+		copy_texture_buffer_to_image(ctx, rndr, tex_data.sub_info);
 
 		return rndr;
 	}
