@@ -3,6 +3,7 @@ struct VSOUTPUT
 {
 	float4 position : SV_Position;
 	float4 color : COLOR0;
+	float2 uv : TEXCOORD0;
 };
 
 // Constant buffer for projection matrix
@@ -37,6 +38,13 @@ VSOUTPUT main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
 		{0.f, 0.f, 1.f, 1.f},
 	};
 
+	// Triangle UV per vertex
+	float2 tri_uv[3] = {
+		{0.0f, 0.5f},
+		{1.0f, 0.0f},
+		{1.0f, 1.0f},
+	};
+
 	// select transform matrix using instance_id
 	float4x4 transform = transforms.data[instance_id];
 
@@ -51,7 +59,8 @@ VSOUTPUT main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
 
 	VSOUTPUT output = {
 		pos,
-		tri_col[vertex_id]
+		tri_col[vertex_id],
+		tri_uv[vertex_id],
 	};
 
 	return output;
