@@ -444,7 +444,8 @@ vk::Fence tfr_in_flight_fence;
 
 		// Features from Vulkan 1.0/1
 		auto features = vk::PhysicalDeviceFeatures{
-			.shaderInt64 = true,
+			.samplerAnisotropy = true,
+			.shaderInt64       = true,
 		};
 
 		// The descriptor buffer extension features
@@ -762,6 +763,9 @@ namespace frame
 
 		// Created by create_texture_image
 		gpu_image texture_image;
+
+		// Created by create_texture_sampler
+		vk::Sampler texture_sampler;
 	};
 
 	// Structure to hold shader binary data, for vertex and fragment shaders
@@ -1442,7 +1446,40 @@ namespace frame
 
 		// Wait for submission to finish
 		auto fence_result = ctx.device.waitForFences(ctx.tfr_in_flight_fence, true, wait_time);
-		assert(fence_result == vk::Result::eSuccess and "Failed to wait for transfer fence");
+		assert(fence_result == vk::Result::eSuccess and "Failed to wait for transfer fence.");
+
+		std::println("{}Copied GPU texture buffer to GPU image.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void create_texture_sampler(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		// Enable anisotropic filtering
+		// This feature is optional, so we must check if it's supported on the device
+		float max_anisotropy = 1.0f;
+		if (ctx.chosen_gpu.getFeatures().samplerAnisotropy)
+		{
+			// Use max. level of anisotropy for this example
+			max_anisotropy = ctx.chosen_gpu.getProperties().limits.maxSamplerAnisotropy;
+		}
+
+		auto sampler_info = vk::SamplerCreateInfo{
+			.magFilter        = vk::Filter::eNearest,
+			.minFilter        = vk::Filter::eNearest,
+			.mipmapMode       = vk::SamplerMipmapMode::eNearest,
+			.addressModeU     = vk::SamplerAddressMode::eClampToEdge,
+			.addressModeV     = vk::SamplerAddressMode::eClampToEdge,
+			.addressModeW     = vk::SamplerAddressMode::eClampToEdge,
+			.anisotropyEnable = true,
+			.maxAnisotropy    = max_anisotropy,
+			.compareEnable    = false,
+			.minLod           = 0,
+			.maxLod           = static_cast<float>(rndr.texture_image.mipmap_levels),
+			.borderColor      = vk::BorderColor::eFloatOpaqueWhite,
+		};
+
+		rndr.texture_sampler = ctx.device.createSampler(sampler_info);
+
+		std::println("{}Texture Sampler Created.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Initialize all the per-frame objects
@@ -1471,6 +1508,9 @@ namespace frame
 		// Creation of Image which is final destination of texture data
 		create_texture_image(ctx, rndr, tex_data.header_info);
 
+		// Creation of Image Sampler for Pixel/Fragment shader
+		create_texture_sampler(ctx, rndr);
+
 		// Populate descriptor, uniform and texture buffers
 		populate_descriptor_buffer(ctx, rndr);
 		populate_uniform_buffer(ctx, rndr, ubo_data);
@@ -1488,6 +1528,9 @@ namespace frame
 		std::println("{}Destroying Frame...{}", CLR::CYN, CLR::RESET);
 
 		ctx.device.waitIdle();
+
+		// Destroy texture sampler
+		ctx.device.destroySampler(rndr.texture_sampler);
 
 		// Destroy texture image
 		ctx.device.destroyImageView(rndr.texture_image.view);
