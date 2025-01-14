@@ -15,7 +15,7 @@ For Linux build, it requires LLVM/Clang version `18.1.x` or better.
 For Windows build, it requires MSVC version `17.10.x` or better.
 
 There are two presets in the config, one for windows and one for linux.
-Linux config builds, assuming Clang 18+ and Vulkan sdk are setup correctly.
+Both builds assume Vulkan sdk is setup correctly.
 
 ### Dependencies
 - Vulkan SDK `1.3.296`
@@ -25,6 +25,7 @@ Linux config builds, assuming Clang 18+ and Vulkan sdk are setup correctly.
 - Vulkan Memory Allocator HPP `3.1`
 - GLM
 - GLFW `3.x`
+- dds-ktx, retrived via vcpkg overlay from dds-ktx github
 
 ## Code Layout
 All the code is in `vk-min-src.cpp` file. 
@@ -35,6 +36,8 @@ Have made best effort to document/comment how it's being used.
 - Dynamic Rendering
 - Shader Device Address
 - Descriptor Buffers
+  - Uniform buffer
+  - Texture buffer, image + sampler
 
 ## References
 - https://github.com/KhronosGroup/Vulkan-Samples/tree/main/samples/extensions/descriptor_buffer_basic
