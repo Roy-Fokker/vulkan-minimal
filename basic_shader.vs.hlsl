@@ -2,7 +2,7 @@
 struct VSOUTPUT
 {
 	float4 position : SV_Position;
-	float4 color : COLOR0;
+	//float4 color : COLOR0;
 	float2 uv : TEXCOORD0;
 };
 
@@ -59,7 +59,7 @@ VSOUTPUT main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
 
 	VSOUTPUT output = {
 		pos,
-		tri_col[vertex_id],
+//		tri_col[vertex_id],
 		tri_uv[vertex_id],
 	};
 

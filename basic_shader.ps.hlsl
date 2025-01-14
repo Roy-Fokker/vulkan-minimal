@@ -2,7 +2,7 @@
 struct PSINPUT
 {
 	float4 position : SV_Position;
-	float4 color : COLOR;
+//	float4 color : COLOR;
 	float2 uv : TEXCOORD0;
 };
 
@@ -11,5 +11,6 @@ SamplerState textureSampler : register(s0, space2);
 
 float4 main(PSINPUT input) : SV_Target
 {
-	return input.color;
+	float4 color = textureObj.Sample(textureSampler, input.uv);
+	return color;
 }
