@@ -96,7 +96,7 @@ namespace io
 	using byte_spans = std::span<byte_span>;
 
 	// Convert any object type to a span of bytes
-		auto as_byte_span(const auto &src) -> byte_span
+	auto as_byte_span(const auto &src) -> byte_span
 	{
 		return std::span{
 			reinterpret_cast<const std::byte *>(&src),
@@ -122,7 +122,7 @@ namespace io
 	// structure to hold file data in memory
 	struct texture
 	{
-struct sub_data
+		struct sub_data
 		{
 			uint32_t layer_idx;
 			uint32_t mip_idx;
@@ -132,7 +132,7 @@ struct sub_data
 		};
 
 		ddsktx_texture_info header_info;
-std::vector<sub_data> sub_info;
+		std::vector<sub_data> sub_info;
 		std::vector<std::byte> data;
 	};
 
@@ -365,7 +365,7 @@ namespace base
 
 		// Created by create_sync_objects
 		std::vector<synchronization> image_signals;
-vk::Fence tfr_in_flight_fence;
+		vk::Fence tfr_in_flight_fence;
 
 		// Created by create_command_pool
 		vk::CommandPool gfx_command_pool;
@@ -761,6 +761,9 @@ namespace frame
 		gpu_descriptor uniform_descriptor;
 		vk::PhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_props;
 
+		// Created by create_image_descriptor_set
+		gpu_descriptor texture_descriptor;
+
 		// Created by create_uniform_buffer
 		std::vector<gpu_buffer> uniform_buffers;
 
@@ -905,6 +908,7 @@ namespace frame
 		auto descriptor_set_layouts = std::array{
 			rndr.uniform_descriptor.layout, // UBO Set 0
 			rndr.uniform_descriptor.layout, // UBO Set 1
+			rndr.texture_descriptor.layout, // Texture Set 2
 		};
 
 		// Pipeline Layout with descriptor set layouts
@@ -1113,6 +1117,12 @@ namespace frame
 	// Create Descriptor Set
 	void create_uniform_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
 	{
+		// Get descriptor buffer properties
+		auto device_props = vk::PhysicalDeviceProperties2{
+			.pNext = &rndr.descriptor_buffer_props,
+		};
+		ctx.chosen_gpu.getProperties2(&device_props);
+
 		auto &descriptor = rndr.uniform_descriptor;
 
 		constexpr auto binding = 0u; // Binding number for the descriptor set, i.e register(b0, space#) in HLSL
@@ -1138,23 +1148,47 @@ namespace frame
 		// Offset of descriptor set layout, based on binding value, I think. for Uniform Buffer
 		descriptor.layout_offset = ctx.device.getDescriptorSetLayoutBindingOffsetEXT(descriptor.layout, binding);
 
-		// Get descriptor buffer properties
-		auto device_props = vk::PhysicalDeviceProperties2{
-			.pNext = &rndr.descriptor_buffer_props,
-		};
-		ctx.chosen_gpu.getProperties2(&device_props);
-
 		// Align the size to the required alignment
 		descriptor.layout_size = align_size(descriptor.layout_size, rndr.descriptor_buffer_props.descriptorBufferOffsetAlignment);
 
 		std::println("{}Uniform buffer descriptor set created.{}", CLR::CYN, CLR::RESET);
 	}
+
+	// Create Image and Sampler Descriptor Set
+	void create_image_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		auto &descriptor = rndr.texture_descriptor;
+
+		constexpr auto binding = 0u; // Binding number for the descriptor set, t0, s0
+
+		// Descriptor Set Layout for Image & Sampler
+		// Rest is mostly same as Uniform Descriptor Set
+		auto desc_set_layout_binding = vk::DescriptorSetLayoutBinding{
+			.binding         = binding,
+			.descriptorType  = vk::DescriptorType::eCombinedImageSampler, // Instead of UniformBuffer bit, we want Image+Sampler
+			.descriptorCount = 1,
+			.stageFlags      = vk::ShaderStageFlagBits::eFragment, // Instead of vertex, this is for Fragment/Pixel shader
+		};
+
+		auto desc_set_layout_info = vk::DescriptorSetLayoutCreateInfo{
+			.flags        = vk::DescriptorSetLayoutCreateFlagBits::eDescriptorBufferEXT,
+			.bindingCount = 1,
+			.pBindings    = &desc_set_layout_binding,
+		};
+
+		descriptor.layout        = ctx.device.createDescriptorSetLayout(desc_set_layout_info);
+		descriptor.layout_size   = ctx.device.getDescriptorSetLayoutSizeEXT(descriptor.layout);
+		descriptor.layout_offset = ctx.device.getDescriptorSetLayoutBindingOffsetEXT(descriptor.layout, binding);
+
+		descriptor.layout_size = align_size(descriptor.layout_size, rndr.descriptor_buffer_props.descriptorBufferOffsetAlignment);
+
+		std::println("{}Texture Descriptor set created{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Create Descriptor Buffer and allocation
-	void create_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	void create_uniform_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
-		auto &ubo = rndr.uniform_descriptor.buffer;
+		auto &udb = rndr.uniform_descriptor.buffer;
 
 		auto buffer_info = vk::BufferCreateInfo{
 			.size  = rndr.uniform_descriptor.layout_size * 2,              // There will be two uniform descriptor sets Projection and Transforms
@@ -1168,22 +1202,57 @@ namespace frame
 		};
 
 		// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
-		std::tie(ubo.buffer, ubo.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &ubo.info);
+		std::tie(udb.buffer, udb.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &udb.info);
 
 		auto buff_addr_info = vk::BufferDeviceAddressInfo{
-			.buffer = ubo.buffer,
+			.buffer = udb.buffer,
 		};
-		ubo.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
-		ubo.size    = ubo.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
+		udb.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
+		udb.size    = udb.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
 
 		// Give the buffer a name for debugging
 		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
 		  .objectType   = vk::ObjectType::eBuffer,
-		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(ubo.buffer)),
-		  .pObjectName  = "Descriptor Buffer",
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(udb.buffer)),
+		  .pObjectName  = "Uniform Descriptor Buffer",
 		});
 
-		std::println("{}Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
+		std::println("{}Uniform Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	void create_image_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		auto &tdb = rndr.texture_descriptor.buffer;
+
+		auto buffer_info = vk::BufferCreateInfo{
+			.size  = rndr.texture_descriptor.layout_size,                  // There is only one descriptor set for texture
+			.usage = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT // This is a descriptor buffer
+			       | vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT  // This descriptor is also has sampler
+			       | vk::BufferUsageFlagBits::eShaderDeviceAddress,        // Need to be able to get GPU memory address
+		};
+
+		auto alloc_info = vma::AllocationCreateInfo{
+			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
+			.usage = vma::MemoryUsage::eAuto, // let VMA figure out what's optimal place.
+		};
+
+		// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
+		std::tie(tdb.buffer, tdb.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &tdb.info);
+
+		auto buff_addr_info = vk::BufferDeviceAddressInfo{
+			.buffer = tdb.buffer,
+		};
+		tdb.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
+		tdb.size    = tdb.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
+
+		// Give the buffer a name for debugging
+		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+		  .objectType   = vk::ObjectType::eBuffer,
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(tdb.buffer)),
+		  .pObjectName  = "Texture Descriptor Buffer",
+		});
+
+		std::println("{}Texture Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
 	void create_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, std::span<uint32_t> sizes)
@@ -1225,7 +1294,7 @@ namespace frame
 	}
 
 	// Populate Descriptor Buffer with Uniform Buffer Address and Size
-	void populate_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	void populate_uniform_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		auto &uds  = rndr.uniform_descriptor;
 		auto &dsbo = uds.buffer;
@@ -1258,7 +1327,41 @@ namespace frame
 		// Send data to GPU
 		ctx.mem_allocator.unmapMemory(dsbo.allocation); // Unmap; or flush to keep mapped object alive on CPU side.
 
-		std::println("{}Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
+		std::println("{}Uniform Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
+	}
+
+	// Populate Descriptor Buffer with Uniform Buffer Address and Size
+	void populate_texture_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	{
+		auto &tds  = rndr.texture_descriptor;
+		auto &dsbo = tds.buffer;
+
+		// Get pointer to CPU-side memory location
+		auto descriptor_buffer_ptr = ctx.mem_allocator.mapMemory(dsbo.allocation);
+
+		auto descriptor_img_info = vk::DescriptorImageInfo{
+			.sampler     = rndr.texture_sampler,
+			.imageView   = rndr.texture_image.view,
+			.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+		};
+
+		auto buff_descriptor_info = vk::DescriptorGetInfoEXT{
+			.type = vk::DescriptorType::eCombinedImageSampler,
+			.data = {
+			  .pCombinedImageSampler = &descriptor_img_info,
+			},
+		};
+
+		auto offset   = tds.layout_offset + tds.layout_size;           // Offset for each descriptor set for each UBO
+		auto buff_ptr = io::offset_ptr(descriptor_buffer_ptr, offset); // Get Offset Descriptor pointer
+
+		// Write to descriptor buffer, the UBO location and size.
+		ctx.device.getDescriptorEXT(&buff_descriptor_info, rndr.descriptor_buffer_props.combinedImageSamplerDescriptorSize, buff_ptr);
+
+		// Send data to GPU
+		ctx.mem_allocator.unmapMemory(dsbo.allocation); // Unmap; or flush to keep mapped object alive on CPU side.
+
+		std::println("{}Texture Descriptor Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Populate Uniform Buffer with data, in this example Perspective Projection Matrix and Instance Transform Matrix
@@ -1409,9 +1512,9 @@ namespace frame
 			.magFilter        = vk::Filter::eNearest,
 			.minFilter        = vk::Filter::eNearest,
 			.mipmapMode       = vk::SamplerMipmapMode::eNearest,
-			.addressModeU     = vk::SamplerAddressMode::eClampToEdge,
-			.addressModeV     = vk::SamplerAddressMode::eClampToEdge,
-			.addressModeW     = vk::SamplerAddressMode::eClampToEdge,
+			.addressModeU     = vk::SamplerAddressMode::eRepeat,
+			.addressModeV     = vk::SamplerAddressMode::eRepeat,
+			.addressModeW     = vk::SamplerAddressMode::eRepeat,
 			.anisotropyEnable = true,
 			.maxAnisotropy    = max_anisotropy,
 			.compareEnable    = false,
@@ -1461,12 +1564,12 @@ namespace frame
 		std::ranges::transform(mips_info, std::back_inserter(copy_regions), [&](auto &info) {
 			return vk::BufferImageCopy{
 				.bufferOffset     = info.offset,
-			.imageSubresource = {
-			  .aspectMask     = img.aspect_mask,
+				.imageSubresource = {
+				  .aspectMask     = img.aspect_mask,
 				  .mipLevel       = info.mip_idx,
 				  .baseArrayLayer = info.layer_idx,
-			  .layerCount     = 1,
-			},
+				  .layerCount     = 1,
+				},
 				.imageExtent = {
 				  .width  = info.width,
 				  .height = info.height,
@@ -1505,8 +1608,12 @@ namespace frame
 		auto rndr = render_context{};
 
 		create_uniform_descriptor_set(ctx, rndr);
+		create_uniform_descriptor_buffer(ctx, rndr);
+
+		create_image_descriptor_set(ctx, rndr);
+		create_image_descriptor_buffer(ctx, rndr);
+
 		create_pipeline(ctx, rndr, shaders);
-		create_descriptor_buffer(ctx, rndr);
 
 		// Create multiple uniform buffers using size of ubo_data
 		auto ubo_sizes = ubo_data | std::views::transform([](auto &&span_data) {
@@ -1518,7 +1625,8 @@ namespace frame
 		create_uniform_buffer(ctx, rndr, ubo_sizes);
 
 		// Creation of texture staging buffer to hold image data
-		// actual data populated later
+		// actual data populated later, it should be destroyed once vk::Image is populated
+		// TODO: destroy the texture_buffer once copy to texture_image is done
 		create_texture_buffer(ctx, rndr, tex_data.header_info.size_bytes);
 
 		// Creation of Image which is final destination of texture data
@@ -1528,10 +1636,11 @@ namespace frame
 		create_texture_sampler(ctx, rndr);
 
 		// Populate descriptor, uniform and texture buffers
-		populate_descriptor_buffer(ctx, rndr);
+		populate_uniform_descriptor_buffer(ctx, rndr);
 		populate_uniform_buffer(ctx, rndr, ubo_data);
-		populate_texture_buffer(ctx, rndr, tex_data.data);
 
+		populate_texture_descriptor_buffer(ctx, rndr);
+		populate_texture_buffer(ctx, rndr, tex_data.data);
 		copy_texture_buffer_to_image(ctx, rndr, tex_data.sub_info);
 
 		return rndr;
@@ -1566,6 +1675,7 @@ namespace frame
 
 		// Destroy descriptor buffer
 		ctx.mem_allocator.destroyBuffer(rndr.uniform_descriptor.buffer.buffer, rndr.uniform_descriptor.buffer.allocation);
+		ctx.mem_allocator.destroyBuffer(rndr.texture_descriptor.buffer.buffer, rndr.texture_descriptor.buffer.allocation);
 
 		// Destroy pipeline and layout
 		ctx.device.destroyPipelineLayout(rndr.layout);
@@ -1574,6 +1684,8 @@ namespace frame
 		// Destroy descriptor set layout
 		ctx.device.destroyDescriptorSetLayout(rndr.uniform_descriptor.layout);
 		rndr.uniform_descriptor = {};
+		ctx.device.destroyDescriptorSetLayout(rndr.texture_descriptor.layout);
+		rndr.texture_descriptor = {};
 	}
 
 	/**
@@ -1690,13 +1802,20 @@ namespace frame
 		cb.bindPipeline(vk::PipelineBindPoint::eGraphics, rndr.pipeline);
 
 		// Descriptor Buffer Bindings data
-		auto desc_buff_binding_info = vk::DescriptorBufferBindingInfoEXT{
-			.address = rndr.uniform_descriptor.buffer.address,                // Address of the descriptor buffer
-			.usage   = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT, // Type of Descriptor Buffer, must match descriptor bugger usage
+		auto desc_buff_binding_info = std::array{
+			vk::DescriptorBufferBindingInfoEXT{
+			  .address = rndr.uniform_descriptor.buffer.address,                // Address of the descriptor buffer
+			  .usage   = vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT, // Type of Descriptor Buffer, must match descriptor buffer usage
+			},
+			vk::DescriptorBufferBindingInfoEXT{
+			  .address = rndr.texture_descriptor.buffer.address, // Address of the descriptor buffer
+			  .usage   = vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT |
+			           vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT, // Type of Descriptor Buffer, must match descriptor buffer usage
+			},
 		};
 
-		// Bind Descriptor buffer
-		cb.bindDescriptorBuffersEXT(1, &desc_buff_binding_info);
+		// Bind Descriptor buffers
+		cb.bindDescriptorBuffersEXT(desc_buff_binding_info);
 
 		auto desc_buff_set_idx = 0u;
 		auto desc_buff_offset  = vk::DeviceSize{ 0 };
@@ -1709,10 +1828,19 @@ namespace frame
 		                                 &desc_buff_offset);
 
 		// Set location of Transform data for shader, determined by desc_buff_offset
-		desc_buff_offset = rndr.uniform_descriptor.layout_size;
+		desc_buff_offset += rndr.uniform_descriptor.layout_size;
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
 		                                 1, // Binding: from descriptor set layout, Set: 1
+		                                 1,
+		                                 &desc_buff_set_idx,
+		                                 &desc_buff_offset);
+
+		// Set location of Texture data for shader, determined by desc_buff_offset
+		desc_buff_offset = 0;
+		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
+		                                 rndr.layout,
+		                                 2, // Binding: from descriptor set layout, Set: 2
 		                                 1,
 		                                 &desc_buff_set_idx,
 		                                 &desc_buff_offset);
