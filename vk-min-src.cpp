@@ -1817,7 +1817,7 @@ namespace frame
 		// Bind Descriptor buffers
 		cb.bindDescriptorBuffersEXT(desc_buff_binding_info);
 
-		auto desc_buff_set_idx = 0u;
+		auto desc_buff_set_idx = 0u; // index of uniform_descriptor in desc_buff_binding_info above
 		auto desc_buff_offset  = vk::DeviceSize{ 0 };
 		// Set location of Projection data for shader, determined by desc_buff_offset
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
@@ -1837,7 +1837,8 @@ namespace frame
 		                                 &desc_buff_offset);
 
 		// Set location of Texture data for shader, determined by desc_buff_offset
-		desc_buff_offset = 0;
+		desc_buff_set_idx = 1; // index of texture_descriptor in desc_buff_binding_info above
+		desc_buff_offset  = 0;
 		cb.setDescriptorBufferOffsetsEXT(vk::PipelineBindPoint::eGraphics,
 		                                 rndr.layout,
 		                                 2, // Binding: from descriptor set layout, Set: 2
