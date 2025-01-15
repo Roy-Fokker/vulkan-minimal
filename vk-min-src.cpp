@@ -1987,7 +1987,7 @@ auto main() -> int
 
 	// Initialize the render frame objects
 	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_data, tex_data);
-	rndr.clear_color = std::array{ 0.5f, 0.4f, 0.5f, 1.0f };
+	rndr.clear_color = std::array{ 0.4f, 0.4f, 0.5f, 1.0f };
 
 	// Loop until the user closes the window
 	std::println("{}Starting main loop...{}", CLR::MAG, CLR::RESET);
