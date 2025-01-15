@@ -17,15 +17,17 @@ For Windows build, it requires MSVC version `17.10.x` or better.
 There are two presets in the config, one for windows and one for linux.
 Both builds assume Vulkan sdk is setup correctly.
 
+For few of the dependencies VCPKG overlays are being used as these either don't exist in VCPKG's port repo or version in their repo was/is outdated.
+
 ### Dependencies
-- Vulkan SDK `1.3.296`
-- DXC, HLSL shader compiler from Vulkan SDK
-- VK-Bootstrap `1.3.298`, retrived via vcpkg overlay from vk-bootstrap github.
-- Vulkan Memory Allocator `3.1`, used by VMA-HPP
-- Vulkan Memory Allocator HPP `3.1`
-- GLM
-- GLFW `3.x`
-- dds-ktx, retrived via vcpkg overlay from dds-ktx github
+- [Vulkan SDK](https://vulkan.lunarg.com) `1.3.296`
+- [DXC](https://github.com/Microsoft/DirectXShaderCompiler/wiki/SPIR%E2%80%90V-CodeGen) `1.8`, HLSL shader compiler bundled in Vulkan SDK
+- [VK-Bootstrap](https://github.com/charles-lunarg/vk-bootstrap) `1.3.298`, retrived via vcpkg overlay from vk-bootstrap github.
+- [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) `3.1`, used by VMA-HPP
+- [Vulkan Memory Allocator HPP](https://github.com/YaaZ/VulkanMemoryAllocator-Hpp) `3.1`
+- [GLM](https://github.com/g-truc/glm) `1.0.1`
+- [GLFW](https://www.glfw.org/) `3.4`
+- [dds-ktx](https://github.com/septag/dds-ktx) `latest`, retrived via vcpkg overlay from dds-ktx github
 
 ## Code Layout
 All the code is in `vk-min-src.cpp` file. 
