@@ -26,9 +26,9 @@ VSOUTPUT main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
 {
 	// Triangle vertices
 	float3 tri_pos[3] = {
+		{0.f, 0.5f, 0.f},
 		{0.5f, -0.5f, 0.f},
 		{-0.5f, -0.5f, 0.f},
-		{0.f, 0.5f, 0.f},
 	};
 
 	// Triangle colors per vertex
@@ -40,9 +40,9 @@ VSOUTPUT main(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
 
 	// Triangle UV per vertex
 	float2 tri_uv[3] = {
-		{0.0f, 0.5f},
-		{1.0f, 0.0f},
+		{0.5f, 0.0f},
 		{1.0f, 1.0f},
+		{0.0f, 1.0f},
 	};
 
 	// select transform matrix using instance_id
