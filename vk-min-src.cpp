@@ -968,22 +968,22 @@ namespace frame
 	// Structure to make image_layout_transition easier to use
 	struct image_transition_info
 	{
-		vk::PipelineStageFlags src_stage_mask;
-		vk::PipelineStageFlags dst_stage_mask;
-		vk::AccessFlags src_access_mask;
-		vk::AccessFlags dst_access_mask;
+		vk::PipelineStageFlags2 src_stage_mask;
+		vk::PipelineStageFlags2 dst_stage_mask;
+		vk::AccessFlags2 src_access_mask;
+		vk::AccessFlags2 dst_access_mask;
 		vk::ImageLayout old_layout;
 		vk::ImageLayout new_layout;
 		vk::ImageSubresourceRange subresource_range;
 	};
 
 	// Helper functions to get vk::PipelineStageFlags and vk::AccessFlags from vk::ImageLayout
-	auto get_pipeline_stage_flags(vk::ImageLayout image_layout) -> vk::PipelineStageFlags
+	auto get_pipeline_stage_flags(vk::ImageLayout image_layout) -> vk::PipelineStageFlags2
 	{
 		switch (image_layout)
 		{
 			using il = vk::ImageLayout;
-			using pf = vk::PipelineStageFlagBits;
+			using pf = vk::PipelineStageFlagBits2;
 
 		case il::eUndefined:
 			return pf::eTopOfPipe;
@@ -1011,12 +1011,12 @@ namespace frame
 		return {};
 	}
 
-	auto get_access_flags(vk::ImageLayout image_layout) -> vk::AccessFlags
+	auto get_access_flags(vk::ImageLayout image_layout) -> vk::AccessFlags2
 	{
 		switch (image_layout)
 		{
 			using il = vk::ImageLayout;
-			using af = vk::AccessFlagBits;
+			using af = vk::AccessFlagBits2;
 
 		case il::eUndefined:
 		case il::ePresentSrcKHR:
@@ -1043,11 +1043,13 @@ namespace frame
 		return {};
 	}
 
-	// Add Pipeline Barrier to transition image from old_layout to new_layout
+	// Add Pipeline Barrier to transition image from old_layout to new_layout, used by update_command_buffer
 	void image_layout_transition(vk::CommandBuffer cb, vk::Image image, const image_transition_info &iti)
 	{
-		auto image_memory_barrier = vk::ImageMemoryBarrier{
+		auto image_memory_barrier = vk::ImageMemoryBarrier2{
+			.srcStageMask        = iti.src_stage_mask,
 			.srcAccessMask       = iti.src_access_mask,
+			.dstStageMask        = iti.dst_stage_mask,
 			.dstAccessMask       = iti.dst_access_mask,
 			.oldLayout           = iti.old_layout,
 			.newLayout           = iti.new_layout,
@@ -1057,13 +1059,15 @@ namespace frame
 			.subresourceRange    = iti.subresource_range,
 		};
 
-		cb.pipelineBarrier(iti.src_stage_mask, iti.dst_stage_mask,
-		                   vk::DependencyFlags{},
-		                   {}, {},
-		                   { image_memory_barrier });
+		auto dep_info = vk::DependencyInfo{
+			.imageMemoryBarrierCount = 1,
+			.pImageMemoryBarriers    = &image_memory_barrier,
+		};
+
+		cb.pipelineBarrier2(dep_info);
 	}
 
-	// overload image_layout_transition with fewer parameters
+	// overload image_layout_transition with fewer parameters, used by update_command_buffer
 	void image_layout_transition(vk::CommandBuffer cb,
 	                             vk::Image image,
 	                             vk::ImageLayout old_layout, vk::ImageLayout new_layout,
@@ -1083,32 +1087,38 @@ namespace frame
 			});
 	}
 
+	// overload with even fewer parameters, this one is used by Buffer to Image copy
 	void image_layout_transition(vk::CommandBuffer cb,
 	                             vk::Image image,
 	                             vk::ImageLayout old_layout, vk::ImageLayout new_layout)
 	{
-		auto aspect_mask          = (new_layout == vk::ImageLayout::eDepthAttachmentOptimal) ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
-		auto image_memory_barrier = vk::ImageMemoryBarrier2{
-			.srcStageMask     = vk::PipelineStageFlagBits2::eAllCommands,
-			.srcAccessMask    = vk::AccessFlagBits2::eMemoryWrite,
-			.dstStageMask     = vk::PipelineStageFlagBits2::eAllCommands,
-			.dstAccessMask    = vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
-			.oldLayout        = old_layout,
-			.newLayout        = new_layout,
-			.image            = image,
-			.subresourceRange = {
-			  .aspectMask     = aspect_mask,
-			  .baseMipLevel   = 0,
-			  .levelCount     = vk::RemainingMipLevels,
-			  .baseArrayLayer = 0,
-			  .layerCount     = vk::RemainingArrayLayers,
-			}
+		using pf = vk::PipelineStageFlagBits2;
+		using af = vk::AccessFlagBits2;
+
+		auto aspect_mask = (new_layout == vk::ImageLayout::eDepthAttachmentOptimal)
+		                     ? vk::ImageAspectFlagBits::eDepth
+		                     : vk::ImageAspectFlagBits::eColor;
+
+		auto sub_res_rng = vk::ImageSubresourceRange{
+			.aspectMask     = aspect_mask,
+			.baseMipLevel   = 0,
+			.levelCount     = vk::RemainingMipLevels,
+			.baseArrayLayer = 0,
+			.layerCount     = vk::RemainingArrayLayers,
 		};
-		auto dep_info = vk::DependencyInfo{
-			.imageMemoryBarrierCount = 1,
-			.pImageMemoryBarriers    = &image_memory_barrier,
-		};
-		cb.pipelineBarrier2(dep_info);
+
+		image_layout_transition(
+			cb,
+			image,
+			image_transition_info{
+			  .src_stage_mask    = pf::eAllCommands,
+			  .dst_stage_mask    = pf::eAllCommands,
+			  .src_access_mask   = af::eMemoryWrite,
+			  .dst_access_mask   = af::eMemoryWrite | af::eMemoryRead,
+			  .old_layout        = old_layout,
+			  .new_layout        = new_layout,
+			  .subresource_range = sub_res_rng,
+			});
 	}
 
 	// return value such that 'size' is adjusted to match the memory 'alignment' requirements of the device
