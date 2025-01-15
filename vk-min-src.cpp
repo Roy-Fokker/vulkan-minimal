@@ -630,7 +630,8 @@ namespace base
 		std::println("{}Graphics Command Buffers allocated.{}", CLR::GRN, CLR::RESET);
 
 		// Create Transfer Command Pool
-		command_pool_info.queueFamilyIndex = ctx.gfx_queue.family; // ctx.transfer_queue.family;
+		// command_pool_info.queueFamilyIndex = ctx.gfx_queue.family;
+		command_pool_info.queueFamilyIndex = ctx.transfer_queue.family;
 		ctx.tfr_command_pool               = ctx.device.createCommandPool(command_pool_info);
 		std::println("{}Transfer Command Pool created.{}", CLR::GRN, CLR::RESET);
 
@@ -1559,15 +1560,16 @@ namespace frame
 		auto cb_result = cb.begin(&cb_begin_info);
 		assert(cb_result == vk::Result::eSuccess and "Failed to begin transfer command buffer");
 
-		auto sub_res_rng = vk::ImageSubresourceRange{
-			.aspectMask     = img.aspect_mask,
-			.baseMipLevel   = 0,
-			.levelCount     = img.mipmap_levels,
-			.baseArrayLayer = 0,
-			.layerCount     = 1,
-		};
+		// auto sub_res_rng = vk::ImageSubresourceRange{
+		// 	.aspectMask     = img.aspect_mask,
+		// 	.baseMipLevel   = 0,
+		// 	.levelCount     = img.mipmap_levels,
+		// 	.baseArrayLayer = 0,
+		// 	.layerCount     = 1,
+		// };
 
-		image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, sub_res_rng);
+		// image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, sub_res_rng);
+		image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 
 		auto copy_regions = std::vector<vk::BufferImageCopy>{};
 		std::ranges::transform(mips_info, std::back_inserter(copy_regions), [&](auto &info) {
@@ -1588,7 +1590,8 @@ namespace frame
 		});
 		cb.copyBufferToImage(tb.buffer, img.image, vk::ImageLayout::eTransferDstOptimal, copy_regions);
 
-		image_layout_transition(cb, img.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, sub_res_rng);
+		// image_layout_transition(cb, img.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, sub_res_rng);
+		image_layout_transition(cb, img.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
 		// End recording
 		cb.end();
@@ -1601,8 +1604,8 @@ namespace frame
 			.commandBufferInfoCount = 1,
 			.pCommandBufferInfos    = &cb_submit_info,
 		};
-		// ctx.transfer_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
-		ctx.gfx_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
+		// ctx.gfx_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
+		ctx.transfer_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
 
 		// Wait for submission to finish
 		auto fence_result = ctx.device.waitForFences(ctx.tfr_in_flight_fence, true, wait_time);
