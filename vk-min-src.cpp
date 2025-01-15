@@ -654,16 +654,16 @@ namespace base
 	{
 		std::println("{}Intializing Vulkan...{}", CLR::BLU, CLR::RESET);
 
-		auto vk_ctx   = vulkan_context{};
-		auto vkb_inst = create_instance(vk_ctx);
-		create_surface(vk_ctx, window);
-		pick_gpu_and_queues(vk_ctx, vkb_inst);
-		create_gpu_mem_allocator(vk_ctx);
-		create_swapchain(vk_ctx);
-		create_sync_objects(vk_ctx);
-		create_command_pool(vk_ctx);
+		auto ctx      = vulkan_context{};
+		auto vkb_inst = create_instance(ctx);
+		create_surface(ctx, window);
+		pick_gpu_and_queues(ctx, vkb_inst);
+		create_gpu_mem_allocator(ctx);
+		create_swapchain(ctx);
+		create_sync_objects(ctx);
+		create_command_pool(ctx);
 
-		return vk_ctx;
+		return ctx;
 	}
 
 	// Clean up Vulkan Objects
@@ -786,192 +786,6 @@ namespace frame
 		std::vector<std::byte> vertex{};
 		std::vector<std::byte> fragment{};
 	};
-
-	// Check if the format is a depth only format
-	auto is_depth_only_format(vk::Format format) -> bool
-	{
-		return format == vk::Format::eD16Unorm ||
-		       format == vk::Format::eD32Sfloat;
-	}
-
-	// Check if the format is a depth stencil format
-	// Not used in this example
-	auto is_depth_stencil_format(vk::Format format) -> bool
-	{
-		return format == vk::Format::eD16UnormS8Uint ||
-		       format == vk::Format::eD24UnormS8Uint ||
-		       format == vk::Format::eD32SfloatS8Uint;
-	}
-
-	// Create a graphics pipeline and layout
-	void create_pipeline(const base::vulkan_context &ctx,
-	                     render_context &rndr,
-	                     const shader_binaries &shaders,
-	                     vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList,
-	                     vk::PolygonMode polygon_mode   = vk::PolygonMode::eFill,
-	                     vk::CullModeFlags cull_mode    = vk::CullModeFlagBits::eFront,
-	                     vk::FrontFace front_face       = vk::FrontFace::eCounterClockwise,
-	                     vk::Format depth_format        = vk::Format::eUndefined)
-	{
-		// Lambda to create vk::ShaderModule
-		auto create_shader_module = [&](const std::span<const std::byte> shader_bin) -> vk::ShaderModule {
-			auto shader_info = vk::ShaderModuleCreateInfo{
-				.codeSize = shader_bin.size(),
-				.pCode    = reinterpret_cast<const uint32_t *>(shader_bin.data()),
-			};
-
-			return ctx.device.createShaderModule(shader_info);
-		};
-
-		// Assume shaders will always have vertex and fragment shaders
-
-		// Convert shader binary into shader modules
-		using shader_stage_module = std::tuple<vk::ShaderStageFlagBits, vk::ShaderModule>;
-		auto shader_list          = std::vector<shader_stage_module>{
-            { vk::ShaderStageFlagBits::eVertex, create_shader_module(shaders.vertex) },
-            { vk::ShaderStageFlagBits::eFragment, create_shader_module(shaders.fragment) },
-		};
-
-		// Shader Stages
-		// Assume all shaders will have main function as entry point
-		auto shader_stage_infos = std::vector<vk::PipelineShaderStageCreateInfo>{};
-		std::ranges::transform(
-			shader_list,
-			std::back_inserter(shader_stage_infos),
-			[](const shader_stage_module &stg_module) {
-			return vk::PipelineShaderStageCreateInfo{
-				.stage  = std::get<vk::ShaderStageFlagBits>(stg_module),
-				.module = std::get<vk::ShaderModule>(stg_module),
-				.pName  = "main" // Assume all shaders will have main function as entry point
-			};
-		});
-
-		// Empty VertexInputStateCreateInfo, as system won't be using it
-		auto vertex_input_info = vk::PipelineVertexInputStateCreateInfo{};
-
-		// Input Assembly
-		auto input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo{
-			.topology               = topology,
-			.primitiveRestartEnable = false,
-		};
-
-		// Viewport
-		auto viewport_info = vk::PipelineViewportStateCreateInfo{
-			.viewportCount = 1,
-			.scissorCount  = 1,
-		};
-
-		// Rasterization
-		auto rasterization_info = vk::PipelineRasterizationStateCreateInfo{
-			.depthClampEnable        = false,
-			.rasterizerDiscardEnable = false,
-			.polygonMode             = polygon_mode,
-			.cullMode                = cull_mode,
-			.frontFace               = front_face,
-			.depthBiasEnable         = false,
-			.lineWidth               = 1.0f,
-		};
-
-		// Multisample anti-aliasing, msaa is disabled
-		auto multisample_info = vk::PipelineMultisampleStateCreateInfo{
-			.rasterizationSamples = vk::SampleCountFlagBits::e1, // should this be higher for higher msaa?
-			.sampleShadingEnable  = false,
-		};
-
-		// Color Blend Attachment, color blending is disabled
-		auto color_blend_attach_st = vk::PipelineColorBlendAttachmentState{
-			.blendEnable    = false,
-			.colorWriteMask = vk::ColorComponentFlagBits::eR |
-			                  vk::ColorComponentFlagBits::eG |
-			                  vk::ColorComponentFlagBits::eB |
-			                  vk::ColorComponentFlagBits::eA,
-		};
-
-		// Color Blend State
-		auto color_blend_info = vk::PipelineColorBlendStateCreateInfo{
-			.logicOpEnable   = false,
-			.logicOp         = vk::LogicOp::eCopy,
-			.attachmentCount = 1,
-			.pAttachments    = &color_blend_attach_st,
-			.blendConstants  = std::array{ 0.f, 0.f, 0.f, 0.f },
-		};
-
-		// Dynamic States
-		auto dynamic_states = std::vector{
-			vk::DynamicState::eViewport,
-			vk::DynamicState::eScissor,
-		};
-
-		auto dynamic_state_info = vk::PipelineDynamicStateCreateInfo{
-			.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
-			.pDynamicStates    = dynamic_states.data(),
-		};
-
-		// Descriptor Set Layouts used by shaders, must match all shaders used by this pipeline
-		auto descriptor_set_layouts = std::array{
-			rndr.uniform_descriptor.layout, // Projection UBO Set 0
-			rndr.uniform_descriptor.layout, // Transform UBO Set 1
-			rndr.texture_descriptor.layout, // Grid Texture Set 2
-		};
-
-		// Pipeline Layout with descriptor set layouts
-		auto pipeline_layout_info = vk::PipelineLayoutCreateInfo{
-			.setLayoutCount = static_cast<uint32_t>(descriptor_set_layouts.size()),
-			.pSetLayouts    = descriptor_set_layouts.data(),
-		};
-		rndr.layout = ctx.device.createPipelineLayout(pipeline_layout_info);
-
-		// array of color formats, only one for now
-		auto color_formats = std::array{ ctx.sc_format };
-
-		// Pipeline Rendering Info
-		auto pipeline_rendering_info = vk::PipelineRenderingCreateInfo{
-			.colorAttachmentCount    = static_cast<uint32_t>(color_formats.size()),
-			.pColorAttachmentFormats = color_formats.data(),
-			.depthAttachmentFormat   = depth_format,
-		};
-		if (not is_depth_only_format(depth_format))
-		{
-			pipeline_rendering_info.stencilAttachmentFormat = depth_format;
-		}
-
-		// Finally create Pipeline
-		auto pipeline_info = vk::GraphicsPipelineCreateInfo{
-			.pNext               = &pipeline_rendering_info,
-			.flags               = vk::PipelineCreateFlagBits::eDescriptorBufferEXT, // because we are using descriptor buffer ext
-			.stageCount          = static_cast<uint32_t>(shader_stage_infos.size()),
-			.pStages             = shader_stage_infos.data(),
-			.pVertexInputState   = &vertex_input_info,
-			.pInputAssemblyState = &input_assembly_info,
-			.pViewportState      = &viewport_info,
-			.pRasterizationState = &rasterization_info,
-			.pMultisampleState   = &multisample_info,
-			.pColorBlendState    = &color_blend_info,
-			.pDynamicState       = &dynamic_state_info,
-			.layout              = rndr.layout,
-			.subpass             = 0,
-		};
-
-		auto result_value = ctx.device.createGraphicsPipeline(nullptr, pipeline_info);
-		assert(result_value.result == vk::Result::eSuccess and "Failed to create Graphics Pipeline");
-
-		rndr.pipeline = result_value.value;
-
-		// Give the pipeline a name for debugging
-		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
-		  .objectType   = vk::ObjectType::ePipeline,
-		  .objectHandle = (uint64_t)(static_cast<VkPipeline>(rndr.pipeline)),
-		  .pObjectName  = "Pipeline",
-		});
-
-		// Destroy the shader modules
-		for (auto &&[stg, mod] : shader_list)
-		{
-			ctx.device.destroyShaderModule(mod);
-		}
-
-		std::println("{}Pipeline created.{}", CLR::CYN, CLR::RESET);
-	}
 
 	// Structure to make image_layout_transition easier to use
 	struct image_transition_info
@@ -1275,6 +1089,192 @@ namespace frame
 		});
 
 		std::println("{}Texture Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	// Check if the format is a depth only format
+	auto is_depth_only_format(vk::Format format) -> bool
+	{
+		return format == vk::Format::eD16Unorm ||
+		       format == vk::Format::eD32Sfloat;
+	}
+
+	// Check if the format is a depth stencil format
+	// depth stencil is not used in this example
+	auto is_depth_stencil_format(vk::Format format) -> bool
+	{
+		return format == vk::Format::eD16UnormS8Uint ||
+		       format == vk::Format::eD24UnormS8Uint ||
+		       format == vk::Format::eD32SfloatS8Uint;
+	}
+
+	// Create a graphics pipeline and layout
+	void create_pipeline(const base::vulkan_context &ctx,
+	                     render_context &rndr,
+	                     const shader_binaries &shaders,
+	                     vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList,
+	                     vk::PolygonMode polygon_mode   = vk::PolygonMode::eFill,
+	                     vk::CullModeFlags cull_mode    = vk::CullModeFlagBits::eFront,
+	                     vk::FrontFace front_face       = vk::FrontFace::eCounterClockwise,
+	                     vk::Format depth_format        = vk::Format::eUndefined)
+	{
+		// Lambda to create vk::ShaderModule
+		auto create_shader_module = [&](const std::span<const std::byte> shader_bin) -> vk::ShaderModule {
+			auto shader_info = vk::ShaderModuleCreateInfo{
+				.codeSize = shader_bin.size(),
+				.pCode    = reinterpret_cast<const uint32_t *>(shader_bin.data()),
+			};
+
+			return ctx.device.createShaderModule(shader_info);
+		};
+
+		// Assume shaders will always have vertex and fragment shaders
+
+		// Convert shader binary into shader modules
+		using shader_stage_module = std::tuple<vk::ShaderStageFlagBits, vk::ShaderModule>;
+		auto shader_list          = std::vector<shader_stage_module>{
+            { vk::ShaderStageFlagBits::eVertex, create_shader_module(shaders.vertex) },
+            { vk::ShaderStageFlagBits::eFragment, create_shader_module(shaders.fragment) },
+		};
+
+		// Shader Stages
+		// Assume all shaders will have main function as entry point
+		auto shader_stage_infos = std::vector<vk::PipelineShaderStageCreateInfo>{};
+		std::ranges::transform(
+			shader_list,
+			std::back_inserter(shader_stage_infos),
+			[](const shader_stage_module &stg_module) {
+			return vk::PipelineShaderStageCreateInfo{
+				.stage  = std::get<vk::ShaderStageFlagBits>(stg_module),
+				.module = std::get<vk::ShaderModule>(stg_module),
+				.pName  = "main" // Assume all shaders will have main function as entry point
+			};
+		});
+
+		// Empty VertexInputStateCreateInfo, as system won't be using it
+		auto vertex_input_info = vk::PipelineVertexInputStateCreateInfo{};
+
+		// Input Assembly
+		auto input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo{
+			.topology               = topology,
+			.primitiveRestartEnable = false,
+		};
+
+		// Viewport
+		auto viewport_info = vk::PipelineViewportStateCreateInfo{
+			.viewportCount = 1,
+			.scissorCount  = 1,
+		};
+
+		// Rasterization
+		auto rasterization_info = vk::PipelineRasterizationStateCreateInfo{
+			.depthClampEnable        = false,
+			.rasterizerDiscardEnable = false,
+			.polygonMode             = polygon_mode,
+			.cullMode                = cull_mode,
+			.frontFace               = front_face,
+			.depthBiasEnable         = false,
+			.lineWidth               = 1.0f,
+		};
+
+		// Multisample anti-aliasing, msaa is disabled
+		auto multisample_info = vk::PipelineMultisampleStateCreateInfo{
+			.rasterizationSamples = vk::SampleCountFlagBits::e1, // should this be higher for higher msaa?
+			.sampleShadingEnable  = false,
+		};
+
+		// Color Blend Attachment, color blending is disabled
+		auto color_blend_attach_st = vk::PipelineColorBlendAttachmentState{
+			.blendEnable    = false,
+			.colorWriteMask = vk::ColorComponentFlagBits::eR |
+			                  vk::ColorComponentFlagBits::eG |
+			                  vk::ColorComponentFlagBits::eB |
+			                  vk::ColorComponentFlagBits::eA,
+		};
+
+		// Color Blend State
+		auto color_blend_info = vk::PipelineColorBlendStateCreateInfo{
+			.logicOpEnable   = false,
+			.logicOp         = vk::LogicOp::eCopy,
+			.attachmentCount = 1,
+			.pAttachments    = &color_blend_attach_st,
+			.blendConstants  = std::array{ 0.f, 0.f, 0.f, 0.f },
+		};
+
+		// Dynamic States
+		auto dynamic_states = std::vector{
+			vk::DynamicState::eViewport,
+			vk::DynamicState::eScissor,
+		};
+
+		auto dynamic_state_info = vk::PipelineDynamicStateCreateInfo{
+			.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
+			.pDynamicStates    = dynamic_states.data(),
+		};
+
+		// Descriptor Set Layouts used by shaders, must match all shaders used by this pipeline
+		auto descriptor_set_layouts = std::array{
+			rndr.uniform_descriptor.layout, // Projection UBO Set 0
+			rndr.uniform_descriptor.layout, // Transform UBO Set 1
+			rndr.texture_descriptor.layout, // Grid Texture Set 2
+		};
+
+		// Pipeline Layout with descriptor set layouts
+		auto pipeline_layout_info = vk::PipelineLayoutCreateInfo{
+			.setLayoutCount = static_cast<uint32_t>(descriptor_set_layouts.size()),
+			.pSetLayouts    = descriptor_set_layouts.data(),
+		};
+		rndr.layout = ctx.device.createPipelineLayout(pipeline_layout_info);
+
+		// array of color formats, only one for now
+		auto color_formats = std::array{ ctx.sc_format };
+
+		// Pipeline Rendering Info
+		auto pipeline_rendering_info = vk::PipelineRenderingCreateInfo{
+			.colorAttachmentCount    = static_cast<uint32_t>(color_formats.size()),
+			.pColorAttachmentFormats = color_formats.data(),
+			.depthAttachmentFormat   = depth_format,
+		};
+		if (not is_depth_only_format(depth_format))
+		{
+			pipeline_rendering_info.stencilAttachmentFormat = depth_format;
+		}
+
+		// Finally create Pipeline
+		auto pipeline_info = vk::GraphicsPipelineCreateInfo{
+			.pNext               = &pipeline_rendering_info,
+			.flags               = vk::PipelineCreateFlagBits::eDescriptorBufferEXT, // because we are using descriptor buffer ext
+			.stageCount          = static_cast<uint32_t>(shader_stage_infos.size()),
+			.pStages             = shader_stage_infos.data(),
+			.pVertexInputState   = &vertex_input_info,
+			.pInputAssemblyState = &input_assembly_info,
+			.pViewportState      = &viewport_info,
+			.pRasterizationState = &rasterization_info,
+			.pMultisampleState   = &multisample_info,
+			.pColorBlendState    = &color_blend_info,
+			.pDynamicState       = &dynamic_state_info,
+			.layout              = rndr.layout,
+			.subpass             = 0,
+		};
+
+		auto result_value = ctx.device.createGraphicsPipeline(nullptr, pipeline_info);
+		assert(result_value.result == vk::Result::eSuccess and "Failed to create Graphics Pipeline");
+
+		rndr.pipeline = result_value.value;
+
+		// Give the pipeline a name for debugging
+		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+		  .objectType   = vk::ObjectType::ePipeline,
+		  .objectHandle = (uint64_t)(static_cast<VkPipeline>(rndr.pipeline)),
+		  .pObjectName  = "Pipeline",
+		});
+
+		// Destroy the shader modules
+		for (auto &&[stg, mod] : shader_list)
+		{
+			ctx.device.destroyShaderModule(mod);
+		}
+
+		std::println("{}Pipeline created.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Create GPU Buffer to hold Uniform Data
@@ -1975,7 +1975,7 @@ auto main() -> int
 	auto window = glfw::make_window(window_width, window_height, app_name);
 
 	// Initialize Vulkan
-	auto vk_ctx = base::init_vulkan(window.get());
+	auto ctx = base::init_vulkan(window.get());
 
 	// Load precompiled shaders
 	auto shaders = frame::shader_binaries{
@@ -2002,7 +2002,7 @@ auto main() -> int
 	};
 
 	// Initialize the render frame objects
-	auto rndr        = frame::init_frame(vk_ctx, shaders, ubo_data, tex_data);
+	auto rndr        = frame::init_frame(ctx, shaders, ubo_data, tex_data);
 	rndr.clear_color = std::array{ 0.4f, 0.4f, 0.5f, 1.0f };
 
 	// Loop until the user closes the window
@@ -2010,19 +2010,19 @@ auto main() -> int
 	while (not glfwWindowShouldClose(window.get()))
 	{
 		// update command buffer for current frame
-		frame::update_command_buffer(vk_ctx, rndr);
+		frame::update_command_buffer(ctx, rndr);
 
 		// submit command buffer and present image
-		frame::submit_and_present(vk_ctx);
+		frame::submit_and_present(ctx);
 
 		// Poll for and process events
 		glfwPollEvents();
 	}
 
 	// Destroy the render pipeline
-	frame::destroy_frame(vk_ctx, rndr);
+	frame::destroy_frame(ctx, rndr);
 
 	// Shutdown Vulkan
-	base::shutdown_vulkan(vk_ctx);
+	base::shutdown_vulkan(ctx);
 	return 0;
 }
