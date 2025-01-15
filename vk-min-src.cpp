@@ -152,44 +152,45 @@ namespace io
 			&texture_parse_err);
 		assert(result == true and "Failed to parse texture file data");
 
-		// Get Sub Data if file has mip maps
-		auto texture_sub_data = std::vector<texture::sub_data>{};
-		if (texture_info.num_mips > 0)
-		{
-			auto layer_rng = std::views::iota(0, texture_info.num_layers);
-			auto mip_rng   = std::views::iota(0, texture_info.num_mips);
-			auto img_str   = static_cast<void *>(texture_file_data.data());
+		auto layer_rng = std::views::iota(0, texture_info.num_layers);
+		auto mip_rng   = std::views::iota(0, texture_info.num_mips);
+		auto img_str   = static_cast<void *>(texture_file_data.data());
 
-			for (auto [layer_idx, mip_idx] : std::views::cartesian_product(layer_rng, mip_rng))
-			{
-				auto sub_data = ddsktx_sub_data{};
-				ddsktx_get_sub(
-					&texture_info,
-					&sub_data,
-					texture_file_data.data(),
-					static_cast<int>(texture_file_data.size()),
-					layer_idx,
-					0,
-					mip_idx);
+		auto sub_data_rng = std::views::cartesian_product(layer_rng, mip_rng) // cartesian product will produce a pair-wise range
+		                  | std::views::transform([&](auto &&layer_mip_nums) -> texture::sub_data {
+			auto [layer_idx, mip_idx] = layer_mip_nums;
 
-				// Get distance from start of image data
-				auto sub_offset = static_cast<uint32_t>(uintptr_t(sub_data.buff) - uintptr_t(img_str) - texture_info.data_offset);
+			auto sub_data = ddsktx_sub_data{};
+			ddsktx_get_sub(
+				&texture_info,
+				&sub_data,
+				texture_file_data.data(),
+				static_cast<int>(texture_file_data.size()),
+				layer_idx,
+				0,
+				mip_idx);
 
-				texture_sub_data.push_back(texture::sub_data{
-				  .layer_idx = static_cast<uint32_t>(layer_idx),
-				  .mip_idx   = static_cast<uint32_t>(mip_idx),
-				  .offset    = sub_offset,
-				  .width     = static_cast<uint32_t>(sub_data.width),
-				  .height    = static_cast<uint32_t>(sub_data.height),
-				});
-			}
-		}
+			// Get distance from start of image data minus the header offset
+			auto sub_offset = static_cast<uint32_t>(uintptr_t(sub_data.buff) - uintptr_t(img_str) - texture_info.data_offset);
+
+			return texture::sub_data{
+				.layer_idx = static_cast<uint32_t>(layer_idx),
+				.mip_idx   = static_cast<uint32_t>(mip_idx),
+				.offset    = sub_offset,
+				.width     = static_cast<uint32_t>(sub_data.width),
+				.height    = static_cast<uint32_t>(sub_data.height),
+			};
+		});
+
+		// Get Sub Data for this texture, convert range into vector
+		auto texture_sub_data = sub_data_rng | std::ranges::to<std::vector>();
 
 		// Remove header data from file_data in-memory.
 		auto img_start_itr = std::begin(texture_file_data);
 		texture_file_data.erase(img_start_itr, img_start_itr + texture_info.data_offset);
 		texture_file_data.shrink_to_fit();
 
+		std::println("\tImage has {} layer(s), and {} mipmap level(s)", texture_info.num_layers, texture_info.num_mips);
 		return { texture_info, texture_sub_data, texture_file_data };
 	}
 }
