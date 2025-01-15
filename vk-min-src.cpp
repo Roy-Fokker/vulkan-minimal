@@ -1306,6 +1306,41 @@ namespace frame
 		std::println("{}Uniform Buffers created [{}].{}", CLR::CYN, idx, CLR::RESET);
 	}
 
+	// Create texture staging buffer
+	void create_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, uint32_t tex_size)
+	{
+		auto &tex = rndr.texture_buffer;
+
+		auto buffer_info = vk::BufferCreateInfo{
+			.size  = tex_size,
+			.usage = vk::BufferUsageFlagBits::eTransferSrc          // We will transfer this to vk::Image
+			       | vk::BufferUsageFlagBits::eShaderDeviceAddress, // We want to be able to get GPU side memory address for this object
+		};
+
+		auto alloc_info = vma::AllocationCreateInfo{
+			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
+			.usage = vma::MemoryUsage::eAuto, // let VMA figure out what's optimal place.
+		};
+
+		// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
+		std::tie(tex.buffer, tex.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &tex.info);
+
+		auto buff_addr_info = vk::BufferDeviceAddressInfo{
+			.buffer = tex.buffer,
+		};
+		tex.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
+		tex.size    = tex.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
+
+		// Give the buffer a name for debugging
+		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+		  .objectType   = vk::ObjectType::eBuffer,
+		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(tex.buffer)),
+		  .pObjectName  = "Texture Staging Buffer",
+		});
+
+		std::println("{}Texture Staging Buffer created.{}", CLR::CYN, CLR::RESET);
+	}
+
 	// Populate Descriptor Buffer with Uniform Buffer Address and Size
 	void populate_uniform_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
@@ -1390,41 +1425,6 @@ namespace frame
 		}
 
 		std::println("{}Uniform Buffers populated.{}", CLR::CYN, CLR::RESET);
-	}
-
-	// Create texture staging buffer
-	void create_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, uint32_t tex_size)
-	{
-		auto &tex = rndr.texture_buffer;
-
-		auto buffer_info = vk::BufferCreateInfo{
-			.size  = tex_size,
-			.usage = vk::BufferUsageFlagBits::eTransferSrc          // We will transfer this to vk::Image
-			       | vk::BufferUsageFlagBits::eShaderDeviceAddress, // We want to be able to get GPU side memory address for this object
-		};
-
-		auto alloc_info = vma::AllocationCreateInfo{
-			.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite | vma::AllocationCreateFlagBits::eMapped,
-			.usage = vma::MemoryUsage::eAuto, // let VMA figure out what's optimal place.
-		};
-
-		// This line inits vk::Buffer, vma::Allocation, and vma::AllocationInfo
-		std::tie(tex.buffer, tex.allocation) = ctx.mem_allocator.createBuffer(buffer_info, alloc_info, &tex.info);
-
-		auto buff_addr_info = vk::BufferDeviceAddressInfo{
-			.buffer = tex.buffer,
-		};
-		tex.address = ctx.device.getBufferAddress(buff_addr_info); // Get GPU address
-		tex.size    = tex.info.size;                               // This is probably unnecessary, seems to just duplicate AllocationInfo
-
-		// Give the buffer a name for debugging
-		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
-		  .objectType   = vk::ObjectType::eBuffer,
-		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(tex.buffer)),
-		  .pObjectName  = "Texture Staging Buffer",
-		});
-
-		std::println("{}Texture Staging Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
 	// Populate texture staging buffer
