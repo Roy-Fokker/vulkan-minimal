@@ -1353,7 +1353,7 @@ namespace frame
 			},
 		};
 
-		auto offset   = tds.layout_offset + tds.layout_size;           // Offset for each descriptor set for each UBO
+		auto offset   = 0;                                             // no offset, as this is only texture descriptor
 		auto buff_ptr = io::offset_ptr(descriptor_buffer_ptr, offset); // Get Offset Descriptor pointer
 
 		// Write to descriptor buffer, the UBO location and size.
