@@ -250,7 +250,7 @@ namespace glfw
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // No OpenGL, we're using Vulkan
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);   // Window is not resizable, because
-		                                              // example does not handle resize of Vulkan Surface/Swapchain
+		// example does not handle resize of Vulkan Surface/Swapchain
 
 		auto window = glfwCreateWindow(width, height, title.data(), nullptr, nullptr); // Create the window
 		assert(window != nullptr and "Failed to create GLFW window");
@@ -440,7 +440,7 @@ namespace base
 			.descriptorBindingVariableDescriptorCount           = true,
 			.runtimeDescriptorArray                             = true,
 			.timelineSemaphore                                  = true,
-			.bufferDeviceAddress                                = true,
+			.bufferDeviceAddress                                = true, // RenderDoc will be unable to run this app because of this property, atleast on AMD hardware
 		};
 
 		// Features from Vulkan 1.0/1
@@ -472,6 +472,7 @@ namespace base
 		assert(phy_dev_select.has_value() == true and "Failed to select Physical GPU");
 
 		// Enable the descriptor buffer extension features
+		// Extension also needs to be enabled to be able to use them
 		auto phy_dev_ret = phy_dev_select.value();
 		auto res         = phy_dev_ret.enable_extension_features_if_present(descriptor_buffer_feature);
 		assert(res == true and "Failed to enable extension features on GPU");
@@ -488,6 +489,7 @@ namespace base
 		VULKAN_HPP_DEFAULT_DISPATCHER.init(ctx.device);
 
 		// Get different queues from the device
+		// Graphics Queue, used for rendering
 		ctx.gfx_queue.queue  = vkb_device.get_queue(vkb::QueueType::graphics).value();
 		ctx.gfx_queue.family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
 
@@ -495,7 +497,7 @@ namespace base
 		ctx.present_queue.queue  = vkb_device.get_queue(vkb::QueueType::present).value();
 		ctx.present_queue.family = vkb_device.get_queue_index(vkb::QueueType::present).value();
 
-		// Transfer queue is not used in this example
+		// Transfer queue, used for copy in-gpu memory
 		ctx.transfer_queue.queue  = vkb_device.get_queue(vkb::QueueType::transfer).value();
 		ctx.transfer_queue.family = vkb_device.get_queue_index(vkb::QueueType::transfer).value();
 
@@ -604,8 +606,7 @@ namespace base
 		};
 		ctx.tfr_in_flight_fence = ctx.device.createFence(tfr_fence_info);
 
-		std::println("{}Semaphores and Fences created.{}",
-		             CLR::GRN, CLR::RESET);
+		std::println("{}Semaphores and Fences created.{}", CLR::GRN, CLR::RESET);
 	}
 
 	// Create a Command Pool and allocate Command Buffers for Graphics use
@@ -871,13 +872,13 @@ namespace frame
 			.lineWidth               = 1.0f,
 		};
 
-		// Multisample anti-aliasing
+		// Multisample anti-aliasing, msaa is disabled
 		auto multisample_info = vk::PipelineMultisampleStateCreateInfo{
 			.rasterizationSamples = vk::SampleCountFlagBits::e1, // should this be higher for higher msaa?
 			.sampleShadingEnable  = false,
 		};
 
-		// Color Blend Attachment
+		// Color Blend Attachment, color blending is disabled
 		auto color_blend_attach_st = vk::PipelineColorBlendAttachmentState{
 			.blendEnable    = false,
 			.colorWriteMask = vk::ColorComponentFlagBits::eR |
@@ -906,11 +907,11 @@ namespace frame
 			.pDynamicStates    = dynamic_states.data(),
 		};
 
-		// Descriptor Sets used by shaders
+		// Descriptor Set Layouts used by shaders, must match all shaders used by this pipeline
 		auto descriptor_set_layouts = std::array{
-			rndr.uniform_descriptor.layout, // UBO Set 0
-			rndr.uniform_descriptor.layout, // UBO Set 1
-			rndr.texture_descriptor.layout, // Texture Set 2
+			rndr.uniform_descriptor.layout, // Projection UBO Set 0
+			rndr.uniform_descriptor.layout, // Transform UBO Set 1
+			rndr.texture_descriptor.layout, // Grid Texture Set 2
 		};
 
 		// Pipeline Layout with descriptor set layouts
@@ -937,7 +938,7 @@ namespace frame
 		// Finally create Pipeline
 		auto pipeline_info = vk::GraphicsPipelineCreateInfo{
 			.pNext               = &pipeline_rendering_info,
-			.flags               = vk::PipelineCreateFlagBits::eDescriptorBufferEXT, // for descriptor buffer
+			.flags               = vk::PipelineCreateFlagBits::eDescriptorBufferEXT, // because we are using descriptor buffer ext
 			.stageCount          = static_cast<uint32_t>(shader_stage_infos.size()),
 			.pStages             = shader_stage_infos.data(),
 			.pVertexInputState   = &vertex_input_info,
@@ -1145,7 +1146,7 @@ namespace frame
 
 		auto &descriptor = rndr.uniform_descriptor;
 
-		constexpr auto binding = 0u; // Binding number for the descriptor set, i.e register(b0, space#) in HLSL
+		constexpr auto binding = 0u; // Binding number for the descriptor set, register b0 in HLSL
 
 		// Descriptor Set Layout for Uniform Buffer
 		auto desc_set_layout_binding = vk::DescriptorSetLayoutBinding{
@@ -1179,13 +1180,13 @@ namespace frame
 	{
 		auto &descriptor = rndr.texture_descriptor;
 
-		constexpr auto binding = 0u; // Binding number for the descriptor set, t0, s0
+		constexpr auto binding = 0u; // Binding number for the descriptor set, register t0, s0
 
 		// Descriptor Set Layout for Image & Sampler
 		// Rest is mostly same as Uniform Descriptor Set
 		auto desc_set_layout_binding = vk::DescriptorSetLayoutBinding{
 			.binding         = binding,
-			.descriptorType  = vk::DescriptorType::eCombinedImageSampler, // Instead of UniformBuffer bit, we want Image+Sampler
+			.descriptorType  = vk::DescriptorType::eCombinedImageSampler, // Instead of UniformBuffer bit, want Image+Sampler
 			.descriptorCount = 1,
 			.stageFlags      = vk::ShaderStageFlagBits::eFragment, // Instead of vertex, this is for Fragment/Pixel shader
 		};
@@ -1205,7 +1206,7 @@ namespace frame
 		std::println("{}Texture Descriptor set created{}", CLR::CYN, CLR::RESET);
 	}
 
-	// Create Descriptor Buffer and allocation
+	// Create Descriptor Buffer and allocation for Uniforms
 	void create_uniform_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		auto &udb = rndr.uniform_descriptor.buffer;
@@ -1240,6 +1241,7 @@ namespace frame
 		std::println("{}Uniform Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
+	// Create Descriptor Buffer for Texture+Sampler
 	void create_texture_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		auto &tdb = rndr.texture_descriptor.buffer;
@@ -1275,6 +1277,7 @@ namespace frame
 		std::println("{}Texture Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
+	// Create GPU Buffer to hold Uniform Data
 	void create_uniform_buffer(const base::vulkan_context &ctx, render_context &rndr, std::span<uint32_t> sizes)
 	{
 		rndr.uniform_buffers.resize(sizes.size());
@@ -1448,6 +1451,8 @@ namespace frame
 		std::println("{}Texture Staging Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
 
+	// Convert from ddsktx_format to vk::Format
+	// This is incomplete list, only have few DDS types
 	auto ddsktxfmt_to_vkfmt(ddsktx_format fmt) -> vk::Format
 	{
 		switch (fmt)
@@ -1531,6 +1536,7 @@ namespace frame
 		std::println("{}GPU Texture Image and View created.{}", CLR::CYN, CLR::RESET);
 	}
 
+	// Create vk::Sampler for shader to use with Texture
 	void create_texture_sampler(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		// Enable anisotropic filtering
@@ -1543,8 +1549,8 @@ namespace frame
 		}
 
 		auto sampler_info = vk::SamplerCreateInfo{
-			.magFilter        = vk::Filter::eLinear,
-			.minFilter        = vk::Filter::eLinear,
+			.magFilter        = vk::Filter::eNearest,
+			.minFilter        = vk::Filter::eNearest,
 			.mipmapMode       = vk::SamplerMipmapMode::eLinear,
 			.addressModeU     = vk::SamplerAddressMode::eRepeat,
 			.addressModeV     = vk::SamplerAddressMode::eRepeat,
@@ -1577,14 +1583,6 @@ namespace frame
 		// Begin recording new transfer commands
 		auto cb_result = cb.begin(&cb_begin_info);
 		assert(cb_result == vk::Result::eSuccess and "Failed to begin transfer command buffer");
-
-		// auto sub_res_rng = vk::ImageSubresourceRange{
-		// 	.aspectMask     = img.aspect_mask,
-		// 	.baseMipLevel   = 0,
-		// 	.levelCount     = img.mipmap_levels,
-		// 	.baseArrayLayer = 0,
-		// 	.layerCount     = 1,
-		// };
 
 		// image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, sub_res_rng);
 		image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
@@ -1829,7 +1827,7 @@ namespace frame
 		// Set Scissor
 		cb.setScissor(0, scissors);
 
-		// Set Pipeline
+		// bind Pipeline
 		cb.bindPipeline(vk::PipelineBindPoint::eGraphics, rndr.pipeline);
 
 		// Descriptor Buffer Bindings data
@@ -1969,7 +1967,7 @@ namespace app
 auto main() -> int
 {
 	// Window properties
-	constexpr auto app_name      = "Vulkan Minimal Example"sv;
+	constexpr auto app_name      = "Vulkan 1.3 Minimal Example"sv;
 	constexpr auto window_width  = 1920;
 	constexpr auto window_height = 1080;
 
