@@ -956,6 +956,13 @@ namespace frame
 
 		rndr.pipeline = result_value.value;
 
+		// Give the pipeline a name for debugging
+		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+		  .objectType   = vk::ObjectType::ePipeline,
+		  .objectHandle = (uint64_t)(static_cast<VkPipeline>(rndr.pipeline)),
+		  .pObjectName  = "Pipeline",
+		});
+
 		// Destroy the shader modules
 		for (auto &&[stg, mod] : shader_list)
 		{
