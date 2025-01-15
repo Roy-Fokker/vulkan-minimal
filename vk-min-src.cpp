@@ -630,7 +630,7 @@ namespace base
 		std::println("{}Graphics Command Buffers allocated.{}", CLR::GRN, CLR::RESET);
 
 		// Create Transfer Command Pool
-		command_pool_info.queueFamilyIndex = ctx.transfer_queue.family;
+		command_pool_info.queueFamilyIndex = ctx.gfx_queue.family; // ctx.transfer_queue.family;
 		ctx.tfr_command_pool               = ctx.device.createCommandPool(command_pool_info);
 		std::println("{}Transfer Command Pool created.{}", CLR::GRN, CLR::RESET);
 
@@ -997,6 +997,7 @@ namespace frame
 		case il::eFragmentShadingRateAttachmentOptimalKHR:
 			return pf::eFragmentShadingRateAttachmentKHR;
 		case il::eReadOnlyOptimal:
+		case il::eShaderReadOnlyOptimal:
 			return pf::eVertexShader | pf::eFragmentShader;
 		case il::ePresentSrcKHR:
 			return pf::eBottomOfPipe;
@@ -1155,7 +1156,7 @@ namespace frame
 	}
 
 	// Create Image and Sampler Descriptor Set
-	void create_image_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
+	void create_texture_descriptor_set(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		auto &descriptor = rndr.texture_descriptor;
 
@@ -1220,7 +1221,7 @@ namespace frame
 		std::println("{}Uniform Descriptor Buffer created.{}", CLR::CYN, CLR::RESET);
 	}
 
-	void create_image_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
+	void create_texture_descriptor_buffer(const base::vulkan_context &ctx, render_context &rndr)
 	{
 		auto &tdb = rndr.texture_descriptor.buffer;
 
@@ -1408,10 +1409,24 @@ namespace frame
 		ctx.device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
 		  .objectType   = vk::ObjectType::eBuffer,
 		  .objectHandle = (uint64_t)(static_cast<VkBuffer>(tex.buffer)),
-		  .pObjectName  = "Texture Buffer",
+		  .pObjectName  = "Texture Staging Buffer",
 		});
 
-		std::println("{}Texture Buffer created.{}", CLR::CYN, CLR::RESET);
+		std::println("{}Texture Staging Buffer created.{}", CLR::CYN, CLR::RESET);
+	}
+
+	// Populate texture staging buffer
+	void populate_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_span tex_data)
+	{
+		auto &tex = rndr.texture_buffer;
+
+		auto tex_ptr = ctx.mem_allocator.mapMemory(tex.allocation);
+
+		std::memcpy(tex_ptr, tex_data.data(), tex_data.size());
+
+		ctx.mem_allocator.unmapMemory(tex.allocation);
+
+		std::println("{}Texture Staging Buffer populated.{}", CLR::CYN, CLR::RESET);
 	}
 
 	auto ddsktxfmt_to_vkfmt(ddsktx_format fmt) -> vk::Format
@@ -1509,9 +1524,9 @@ namespace frame
 		}
 
 		auto sampler_info = vk::SamplerCreateInfo{
-			.magFilter        = vk::Filter::eNearest,
-			.minFilter        = vk::Filter::eNearest,
-			.mipmapMode       = vk::SamplerMipmapMode::eNearest,
+			.magFilter        = vk::Filter::eLinear,
+			.minFilter        = vk::Filter::eLinear,
+			.mipmapMode       = vk::SamplerMipmapMode::eLinear,
 			.addressModeU     = vk::SamplerAddressMode::eRepeat,
 			.addressModeV     = vk::SamplerAddressMode::eRepeat,
 			.addressModeW     = vk::SamplerAddressMode::eRepeat,
@@ -1519,7 +1534,7 @@ namespace frame
 			.maxAnisotropy    = max_anisotropy,
 			.compareEnable    = false,
 			.minLod           = 0,
-			.maxLod           = static_cast<float>(rndr.texture_image.mipmap_levels),
+			.maxLod           = 0, // static_cast<float>(rndr.texture_image.mipmap_levels),
 			.borderColor      = vk::BorderColor::eFloatOpaqueWhite,
 		};
 
@@ -1528,21 +1543,7 @@ namespace frame
 		std::println("{}Texture Sampler Created.{}", CLR::CYN, CLR::RESET);
 	}
 
-	// Populate texture staging buffer
-	void populate_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_span tex_data)
-	{
-		auto &tex = rndr.texture_buffer;
-
-		auto tex_ptr = ctx.mem_allocator.mapMemory(tex.allocation);
-
-		std::memcpy(tex_ptr, tex_data.data(), tex_data.size());
-
-		ctx.mem_allocator.unmapMemory(tex.allocation);
-
-		std::println("{}Texture Buffer populated.{}", CLR::CYN, CLR::RESET);
-	}
-
-	void copy_texture_buffer_to_image(const base::vulkan_context &ctx, render_context &rndr, const std::vector<io::texture::sub_data> mips_info)
+	void copy_texture_buffer_to_image(const base::vulkan_context &ctx, render_context &rndr, const std::span<const io::texture::sub_data> mips_info)
 	{
 		auto &cb  = ctx.tfr_command_buffer;
 		auto &img = rndr.texture_image;
@@ -1558,7 +1559,15 @@ namespace frame
 		auto cb_result = cb.begin(&cb_begin_info);
 		assert(cb_result == vk::Result::eSuccess and "Failed to begin transfer command buffer");
 
-		image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+		auto sub_res_rng = vk::ImageSubresourceRange{
+			.aspectMask     = img.aspect_mask,
+			.baseMipLevel   = 0,
+			.levelCount     = img.mipmap_levels,
+			.baseArrayLayer = 0,
+			.layerCount     = 1,
+		};
+
+		image_layout_transition(cb, img.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, sub_res_rng);
 
 		auto copy_regions = std::vector<vk::BufferImageCopy>{};
 		std::ranges::transform(mips_info, std::back_inserter(copy_regions), [&](auto &info) {
@@ -1579,7 +1588,7 @@ namespace frame
 		});
 		cb.copyBufferToImage(tb.buffer, img.image, vk::ImageLayout::eTransferDstOptimal, copy_regions);
 
-		image_layout_transition(cb, img.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+		image_layout_transition(cb, img.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, sub_res_rng);
 
 		// End recording
 		cb.end();
@@ -1592,7 +1601,8 @@ namespace frame
 			.commandBufferInfoCount = 1,
 			.pCommandBufferInfos    = &cb_submit_info,
 		};
-		ctx.transfer_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
+		// ctx.transfer_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
+		ctx.gfx_queue.queue.submit2(submit_info, ctx.tfr_in_flight_fence);
 
 		// Wait for submission to finish
 		auto fence_result = ctx.device.waitForFences(ctx.tfr_in_flight_fence, true, wait_time);
@@ -1610,8 +1620,8 @@ namespace frame
 		create_uniform_descriptor_set(ctx, rndr);
 		create_uniform_descriptor_buffer(ctx, rndr);
 
-		create_image_descriptor_set(ctx, rndr);
-		create_image_descriptor_buffer(ctx, rndr);
+		create_texture_descriptor_set(ctx, rndr);
+		create_texture_descriptor_buffer(ctx, rndr);
 
 		create_pipeline(ctx, rndr, shaders);
 
