@@ -770,9 +770,6 @@ namespace frame
 		// Created by create_uniform_buffer
 		std::vector<gpu_buffer> uniform_buffers;
 
-		// Created by create_texture_buffer
-		gpu_buffer texture_buffer;
-
 		// Created by create_texture_image
 		gpu_image texture_image;
 
@@ -1317,9 +1314,9 @@ namespace frame
 	}
 
 	// Create texture staging buffer
-	void create_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, uint32_t tex_size)
+	auto create_texture_buffer(const base::vulkan_context &ctx, uint32_t tex_size) -> gpu_buffer
 	{
-		auto &tex = rndr.texture_buffer;
+		auto tex = gpu_buffer{};
 
 		auto buffer_info = vk::BufferCreateInfo{
 			.size  = tex_size,
@@ -1349,6 +1346,7 @@ namespace frame
 		});
 
 		std::println("{}Texture Staging Buffer created.{}", CLR::CYN, CLR::RESET);
+		return tex;
 	}
 
 	// Populate Descriptor Buffer with Uniform Buffer Address and Size
@@ -1438,10 +1436,8 @@ namespace frame
 	}
 
 	// Populate texture staging buffer
-	void populate_texture_buffer(const base::vulkan_context &ctx, render_context &rndr, io::byte_span tex_data)
+	void populate_texture_buffer(const base::vulkan_context &ctx, gpu_buffer &tex, io::byte_span tex_data)
 	{
-		auto &tex = rndr.texture_buffer;
-
 		auto tex_ptr = ctx.mem_allocator.mapMemory(tex.allocation);
 
 		std::memcpy(tex_ptr, tex_data.data(), tex_data.size());
@@ -1568,11 +1564,15 @@ namespace frame
 		std::println("{}Texture Sampler Created.{}", CLR::CYN, CLR::RESET);
 	}
 
-	void copy_texture_buffer_to_image(const base::vulkan_context &ctx, render_context &rndr, const std::span<const io::texture::sub_data> mips_info)
+	void copy_texture_to_image(const base::vulkan_context &ctx, render_context &rndr, const io::texture &texture_data)
 	{
-		auto &cb  = ctx.tfr_command_buffer;
-		auto &img = rndr.texture_image;
-		auto &tb  = rndr.texture_buffer;
+		auto &cb        = ctx.tfr_command_buffer;
+		auto &img       = rndr.texture_image;
+		auto &mips_info = texture_data.sub_info;
+
+		// Create and populate staging buffer on GPU for texture
+		auto tb = create_texture_buffer(ctx, texture_data.header_info.size_bytes);
+		populate_texture_buffer(ctx, tb, texture_data.data);
 
 		// Reset Tranfer queue fence
 		ctx.device.resetFences(ctx.tfr_in_flight_fence);
@@ -1627,6 +1627,10 @@ namespace frame
 		auto fence_result = ctx.device.waitForFences(ctx.tfr_in_flight_fence, true, wait_time);
 		assert(fence_result == vk::Result::eSuccess and "Failed to wait for transfer fence.");
 
+		// Delete texture staging buffer
+		ctx.mem_allocator.destroyBuffer(tb.buffer, tb.allocation);
+		tb = {};
+
 		std::println("{}Copied GPU texture buffer to GPU image.{}", CLR::CYN, CLR::RESET);
 	}
 
@@ -1653,11 +1657,6 @@ namespace frame
 		// Data is populated later
 		create_uniform_buffer(ctx, rndr, ubo_sizes);
 
-		// Creation of texture staging buffer to hold image data
-		// actual data populated later, it should be destroyed once vk::Image is populated
-		// TODO: destroy the texture_buffer once copy to texture_image is done
-		create_texture_buffer(ctx, rndr, tex_data.header_info.size_bytes);
-
 		// Creation of Image which is final destination of texture data
 		create_texture_image(ctx, rndr, tex_data.header_info);
 
@@ -1669,8 +1668,8 @@ namespace frame
 		populate_uniform_buffer(ctx, rndr, ubo_data);
 
 		populate_texture_descriptor_buffer(ctx, rndr);
-		populate_texture_buffer(ctx, rndr, tex_data.data);
-		copy_texture_buffer_to_image(ctx, rndr, tex_data.sub_info);
+
+		copy_texture_to_image(ctx, rndr, tex_data);
 
 		return rndr;
 	}
@@ -1690,10 +1689,6 @@ namespace frame
 		ctx.device.destroyImageView(rndr.texture_image.view);
 		ctx.mem_allocator.destroyImage(rndr.texture_image.image, rndr.texture_image.allocation);
 		rndr.texture_image = {};
-
-		// Destroy texture buffer
-		ctx.mem_allocator.destroyBuffer(rndr.texture_buffer.buffer, rndr.texture_buffer.allocation);
-		rndr.texture_buffer = {};
 
 		// Destroy uniform buffers
 		for (auto &&ubo : rndr.uniform_buffers)
