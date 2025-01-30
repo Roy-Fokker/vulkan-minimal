@@ -9,7 +9,7 @@ It does not use any "framework" style scaffolding.
 ## Project Setup
 Project uses CMake `3.31.x`, Ninja `1.12.1` and VCPKG, for a cross-platform build (Windows and Linux)
 `C++23` support is required, including C++ Modules.
-Vulkan SDK is at `1.3.296`, which was latest available SDK, and vk-bootstrap is at `1.3.298`.
+Vulkan SDK is at `1.4.304`, which was latest available SDK, and vk-bootstrap is at `1.4.304`.
 
 For Linux build, it requires LLVM/Clang version `18.1.x` or better.
 For Windows build, it requires MSVC version `17.10.x` or better.
